@@ -53,5 +53,6 @@
   "build": "Source-only GCC5.4 MIPS o32 uClibc, --no-undefined, dynamic GNU-latomic; runtime copied from same compiler",
   "tests": "Full T23 and T30 suites passed; optional T30.so export check skipped because that library was not built; metadata ASan+UBSan passed",
   "companion_receipt": "jooanipc-open/docs/camera-native-test-20261017.json",
-  "boot": "Source-built OpenIMP passed native startup through the retained-OEM reboot handoff; final companion release qualification is tracked in its receipt"
+  "boot": "Passed automatic guarded OEM bootstrap→native handoff with clientfa902773; four strict live decodes, native watchdog qualification, both Frigate recordings strict-decoded and reboot-persistent preset recall",
+  "final_client_sha256": "fa902773d7fc55974c80122255468e666f42f2c42d6c2c53462cdb9d70e0ba01"
 }
