@@ -1,0 +1,56 @@
+{
+  "started_utc": "2026-10-17T19:29:31.609970+00:00",
+  "sha256": {
+    "libimp.so": "47165859aa067f1924cde30bebf1f7195ab72a5aa836b026d3f8feb6ae66a74b",
+    "sensor-probe": "93d7cc2fcb739fdcf711e9650732f9976d9825db938222ce96832269f12e23be",
+    "ivdc-soak-probe": "ce25ccae0e802b045f6973f7424e7cf24a2d8310b254e8c8978337537e6af8fc"
+  },
+  "cycles": [
+    {
+      "probe": "sensor-probe",
+      "cycle": 1,
+      "exit": 0,
+      "expected_marker": true,
+      "kernel_taint": 4096,
+      "kernel_oops": false,
+      "media_handles_remaining": 0
+    },
+    {
+      "probe": "sensor-probe",
+      "cycle": 2,
+      "exit": 0,
+      "expected_marker": true,
+      "kernel_taint": 4096,
+      "kernel_oops": false,
+      "media_handles_remaining": 0
+    },
+    {
+      "probe": "ivdc-soak-probe",
+      "cycle": 1,
+      "exit": 0,
+      "expected_marker": true,
+      "kernel_taint": 4096,
+      "kernel_oops": false,
+      "media_handles_remaining": 0
+    },
+    {
+      "probe": "ivdc-soak-probe",
+      "cycle": 2,
+      "exit": 0,
+      "expected_marker": true,
+      "kernel_taint": 4096,
+      "kernel_oops": false,
+      "media_handles_remaining": 0
+    }
+  ],
+  "result": "Ordered dual sensor activation and FPS15/1 calls/readback passed twice, followed by two kernel-clean 3-second FS0 workspace cycles. No video frame was encoded or decoded in these probes.",
+  "fix": "ENUMINPUT80 traversal assigns runtime sensor indices before S_INPUT; registration alone leaves secondary index zero.",
+  "tests": {
+    "host": "1717 mocked ISP ABI/lifecycle checks passed",
+    "sanitizers": "ASan+UBSan passed",
+    "qemu": "MIPS uClibc ISP contract executable passed"
+  },
+  "fps_limit": "An earlier request for10/1 returned success but read back15/1 on both sensors. Only15/1 was qualified here; arbitrary FPS changes remain unqualified.",
+  "camera_state": "OEM left stopped under independent watchdog custody, no firmware/boot/module changes.",
+  "private_evidence": "jooanipc-open/build/camera-enum-20261017"
+}

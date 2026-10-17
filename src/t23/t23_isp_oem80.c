@@ -10,8 +10,15 @@
 
 typedef struct { uint32_t enable, selector; } SensorInput;
 typedef struct { uint32_t selector, phys, size; } SensorBuffer;
+typedef struct {
+    uint32_t index;
+    char name[32];
+    uint32_t type;
+    unsigned char reserved[40];
+} SensorEnum;
 _Static_assert(sizeof(SensorInput) == 8, "OEM sensor-input payload");
 _Static_assert(sizeof(SensorBuffer) == 12, "OEM ISP-buffer payload");
+_Static_assert(sizeof(SensorEnum) == 80, "OEM input-enumeration payload");
 
 static int selector(const void *record)
 {
@@ -27,6 +34,29 @@ static int input(int fd, unsigned int id, unsigned int enable)
     SensorInput value = {enable, id};
     /* The command advertises four bytes but this driver copies eight. */
     return ioctl(fd, 0xc0045627ul, &value);
+}
+
+static int enumerate_inputs(int fd, const char *name)
+{
+    int found = 0;
+    /* Enumeration assigns runtime sensor indices in this OEM module. Replay
+     * the complete traversal, including its terminal EINVAL, before S_INPUT.
+     * Only two physical slots belong to this profile; bound broken drivers. */
+    for (uint32_t index = 0; index <= 2; ++index) {
+        SensorEnum value = {0};
+        value.index = index;
+        if (ioctl(fd, 0xc050561aul, &value) != 0) {
+            if (errno != EINVAL) return -1;
+            if (found) return 0;
+            errno = ENOENT; return -1;
+        }
+        if (index == 2) { errno = EOVERFLOW; return -1; }
+        if (value.index != index || !memchr(value.name, 0, sizeof(value.name))) {
+            errno = EPROTO; return -1;
+        }
+        if (!strcmp(value.name, name)) found = 1;
+    }
+    errno = EOVERFLOW; return -1;
 }
 
 static int release_dma(IMPDMABufferInfo **buffer)
@@ -110,6 +140,7 @@ int openimp_t23_oem80_sensor_add(OpenIMPT23IspOem80 *state, int fd,
     /* The default-path command advertises four bytes but copies 128. Its
      * internal path-slot semantics are not inferred here. Caller zero-pads. */
     if ((path128 && ioctl(fd, 0xc00456c7ul, path128) != 0) ||
+        enumerate_inputs(fd, record84) != 0 ||
         input(fd, (unsigned int)id, 1) != 0 ||
         allocate_buffer(fd, (unsigned int)id, 0, &state->ncu[id]) != 0 ||
         (wdr && allocate_buffer(fd, (unsigned int)id, 1, &state->wdr[id]) != 0)) {

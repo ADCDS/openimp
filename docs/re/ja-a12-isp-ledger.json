@@ -17,6 +17,21 @@
       "copy_instruction": "0x12cb4"
     },
     {
+      "name": "enumerate sensor inputs",
+      "command": "0xc050561a",
+      "payload_bytes": 80,
+      "fields": {
+        "index": "0x00:u32",
+        "name": "0x04:char[32]",
+        "type": "0x24:u32"
+      },
+      "dispatch_copy_range": "0x12a80..0x12b34",
+      "runtime_side_effect": "subdev_sensor_ops_enum_input at 0x5de0..0x5df8 assigns sensor+0xdc from registered selector; S_INPUT searches it at 0x4d5c..0x4d64",
+      "terminal_errno": "EINVAL",
+      "oem_sequence": "REGISTER -> optional IQ path -> enumerate from zero through terminal failure even after matching name -> S_INPUT -> NCU GET/SET",
+      "oem_decompile_lines": "356228..356249; dual-add then one global EnableSensor at 39510..39538"
+    },
+    {
       "name": "unregister sensor",
       "command": "0x805456c2",
       "payload_bytes": 84,

@@ -3,12 +3,13 @@
 This fork adds an explicit compatibility profile for the JOOAN W3-U / JA-A12,
 T23N with CV2005/CV2005S1, retaining its OEM kernel and modules.
 
-**Status:** source-only builds and boundary tests pass. The OEM80 reserved-rmem
-IVDC workspace was allocated, adopted by the real driver, detached and freed
-in two native probe cycles. The first cycle was kernel-clean; the second hit a
-secondary AE kernel fault despite registering both sensors. Stable native
-capture remains unqualified. The combined daemon also stops at an unported
-secondary-FPS ioctl. See the [IVDC validation receipt](re/ja-a12-ivdc-validation-20261017.json).
+**Status:** source-only builds and boundary tests pass. The initial IVDC
+workspace tests exposed a secondary AE kernel fault and rejected secondary-FPS
+control. Restoring the OEM input-enumeration step initializes the secondary
+runtime index: two subsequent sensor/FPS checks and two three-second IVDC
+workspace cycles were kernel-clean. Native video encoding remains unqualified.
+See the [initial IVDC receipt](re/ja-a12-ivdc-validation-20261017.json) and
+[sensor activation follow-up](re/ja-a12-sensor-activation-20261017.json).
 
 ## Build and selection
 
@@ -120,6 +121,23 @@ records successful global sensor/link startup so FrameSource does not repeat
 those operations.
 The [physical-trial receipt](re/ja-a12-camera-trial-20261017.json) separates the
 failed capture run from the subsequent source changes and guarded retry.
+
+## Sensor input enumeration
+
+OEM AddSensor traverses `ENUMINPUT` (`0xc050561a`, 80 bytes) after registration
+and before `S_INPUT`. This module assigns each sensor's runtime index during
+enumeration; skipping it leaves the secondary sensor registered but unselected.
+The port now traverses both bounded slots through terminal `EINVAL`, even after
+finding the requested name. It validates the returned index and bounded name,
+then selects the registered ID and supplies NCU memory. Errors retain the
+existing rollback and DMA ownership checks. Sensors must be added in OEM order,
+primary 0 then secondary 1, followed by one global EnableSensor call.
+
+The physical follow-up qualified requests/readback at 15/1 fps. A request for
+10/1 returned success but still read back 15/1; other rates remain unqualified.
+The corrected activation passed two subsequent three-second FS0 lifecycle
+cycles without the earlier secondary AE fault. These are resource and sensor
+activation checks, not encoded-video qualification.
 
 ## Reserved-memory IVDC workspace lifecycle
 
