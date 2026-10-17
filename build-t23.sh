@@ -126,6 +126,7 @@ compile t23_misc src/t23/openimp_t23_misc.c -Werror
 compile t23_helix_native src/t30/t30_helix_encoder.c
 compile t23_vpu_abi src/t30/t23_vpu_abi.c -Werror
 compile t23_isp_oem80 src/t23/t23_isp_oem80.c -Werror
+compile t23_ivdc_oem80 src/t23/t23_ivdc_oem80.c -Werror
 compile t23_h264_descriptor src/t21/t21_h264_descriptor.c -Werror
 compile t23_h264_common src/t30/h264enc/common.c -Werror
 compile t23_h264_cabac src/t30/h264enc/cabac.c -Werror
@@ -161,7 +162,7 @@ compile t23_helix_jpeg src/t30/helix_jpeg.c -Werror
     "$output_dir/core_imp_log.o" \
     "$output_dir/core_video_drop.o" \
     "$output_dir/framesource.o" \
-    "$output_dir/isp.o" "$output_dir/t23_isp_oem80.o" \
+    "$output_dir/isp.o" "$output_dir/t23_isp_oem80.o" "$output_dir/t23_ivdc_oem80.o" \
     "$output_dir/isp_t23_tuning.o" \
     "$output_dir/t23_compat.o" \
     "$output_dir/t23_state.o" \
@@ -210,9 +211,15 @@ compile t23_helix_jpeg src/t30/helix_jpeg.c -Werror
     "$output_dir/t23_h264_set.o" "$output_dir/t23_h264_slice.o" \
     "$output_dir/t23_rate_control.o" "$output_dir/t23_eprc.o" \
     "$output_dir/t23_eprc_mbrc.o" \
-    "$output_dir/dma_alloc.o" \
+    "$output_dir/dma_alloc.o" "$output_dir/t23_ivdc_oem80.o" \
     -lpthread -lm -o "$output_dir/openimp-t23-helix-selftest"
 "$stripper" --strip-unneeded "$output_dir/openimp-t23-helix-selftest"
+
+# Exact OEM80 FrameSource/workspace lifecycle, using retained sensor timings.
+"$compiler" $base_flags $repo_includes -Wall -Wextra -Werror \
+    "$project_dir/tools/t23_ivdc_lifecycle_probe.c" -ldl \
+    -o "$output_dir/openimp-t23-ivdc-probe"
+"$stripper" --strip-unneeded "$output_dir/openimp-t23-ivdc-probe"
 
 if readelf -d "$output_dir/libimp.so" |
     grep -q 'Shared library: \[libimp.so'

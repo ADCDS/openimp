@@ -162,7 +162,8 @@ FS_SOURCES := fs_lifecycle_test.c \
 	$(ROOT)/src/framesource/framesource_tseries.c \
 	$(ROOT)/src/kernel_interface.c $(ROOT)/src/core/video_drop.c \
 	$(ROOT)/src/framesource/nv12_rotate.c
-FS_DEPS := $(FS_SOURCES) $(ROOT)/src/kernel_interface.h \
+FS_OEM80_SOURCES := $(ROOT)/src/t23/t23_ivdc_oem80.c $(ROOT)/src/t30/t23_vpu_abi.c
+FS_DEPS := $(FS_SOURCES) $(FS_OEM80_SOURCES) $(ROOT)/src/kernel_interface.h \
 	$(ROOT)/src/vbm_dq_step.h $(ROOT)/src/openimp_ready_event.h \
 	$(ROOT)/src/video_drop.h $(ROOT)/src/vbm_delay.h
 FS_FLAGS = -Wno-unused-result '-D_Static_assert(c,m)=' -fno-pie -no-pie \
@@ -182,7 +183,7 @@ fs_lifecycle_test_t20: $(FS_DEPS)
 		-o $@ $(FS_SOURCES) -pthread
 
 fs_lifecycle_test_t23: $(FS_DEPS)
-	$(CC) $(CFLAGS) $(FS_FLAGS) -DPLATFORM_T23 -o $@ $(FS_SOURCES) -pthread
+	$(CC) $(CFLAGS) $(FS_FLAGS) -DPLATFORM_T23 -o $@ $(FS_SOURCES) $(FS_OEM80_SOURCES) -pthread
 
 # IMP_System_Init/Exit and the timestamp base, as built for T21.
 SYSTEM_SOURCES := system_test.c $(ROOT)/src/t40/openimp_p0.c
@@ -207,12 +208,13 @@ TSAN_RUN = TSAN_OPTIONS="halt_on_error=1 suppressions=$(CURDIR)/fs_lifecycle_tsa
 
 sanitize: $(FS_DEPS) $(HELIX_SOURCES) $(HELIX_T21_SOURCES) $(IVS_DEPS)
 	set -e; for soc in "T21" "T20 -DPLATFORM_T21" "T23"; do \
-		name=$$(echo $$soc | cut -d' ' -f1); \
+		name=$$(echo $$soc | cut -d' ' -f1); extra=; \
+		[ "$$name" != T23 ] || extra="$(FS_OEM80_SOURCES)"; \
 		$(SAN_CC) $(FS_FLAGS) $(FS_SANITIZE_ASAN) -DPLATFORM_$$soc \
-			-o fs_lifecycle_asan_$$name $(FS_SOURCES) -pthread; \
+			-o fs_lifecycle_asan_$$name $(FS_SOURCES) $$extra -pthread; \
 		./fs_lifecycle_asan_$$name; \
 		$(SAN_CC) $(FS_FLAGS) $(FS_SANITIZE_TSAN) -DPLATFORM_$$soc \
-			-o fs_lifecycle_tsan_$$name $(FS_SOURCES) -pthread; \
+			-o fs_lifecycle_tsan_$$name $(FS_SOURCES) $$extra -pthread; \
 		$(TSAN_RUN) ./fs_lifecycle_tsan_$$name; \
 	done
 	$(SAN_CC) $(SYSTEM_FLAGS) $(FS_SANITIZE_TSAN) -o system_tsan \

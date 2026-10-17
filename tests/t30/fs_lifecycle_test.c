@@ -413,6 +413,7 @@ int remove_observer_from_module(void *src, void *dst)
     return 0;
 }
 #if defined(PLATFORM_T23)
+int DMA_Ensure_RMEM(void) { CHECK(0, "SDK88 lifecycle unexpectedly requested OEM80 workspace"); return -1; }
 int openimp_t23_persist_enabled(void) { return 0; }
 void openimp_t23_persist_write(const char *buffer, size_t size)
 {
@@ -1164,6 +1165,9 @@ static void test_rotate(void)
 
 int main(void)
 {
+    #if defined(PLATFORM_T23)
+    setenv("OPENIMP_T23_DRIVER_ABI", "sdk88", 1);
+    #endif
     report = fdopen(dup(2), "w");
     if (!report)
         return 1;

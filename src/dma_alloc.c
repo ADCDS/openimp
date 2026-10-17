@@ -17,6 +17,10 @@
 
 #include "dma_alloc.h"
 #include "rmem_arena.h"
+#if defined(PLATFORM_T23)
+#include "t30/t23_vpu_abi.h"
+#include "t23/t23_ivdc_oem80.h"
+#endif
 #include "imp_log_int.h"
 
 /* Best-effort check that a pointer looks like a C string within max bytes */
@@ -84,6 +88,9 @@ static int g_mem_fd = -1;
 static pthread_mutex_t g_dma_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_alloc_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int g_dma_initialized = 0;
+#if defined(PLATFORM_T23)
+static int g_t23_oem80 = 0; /* frozen with allocator initialization */
+#endif
 static int g_rmem_supported = 0;  /* set when a DMA-capable backend is ready */
 
 /* RMEM-specific globals (reserved-arena allocator, see rmem_arena.h) */
@@ -455,21 +462,41 @@ invalid:
     return -1;
 }
 
+static int dma_initialized_status(void)
+{
+#if defined(PLATFORM_T23)
+    if (g_t23_oem80 && openimp_t23_ivdc_kernel_healthy() != 0) return -1;
+#endif
+    return g_rmem_supported ? 0 : -1;
+}
+
 static int dma_init(void) {
     int cmdline_config;
     int env_config;
     int rmem_configured;
 
     if (g_dma_initialized) {
-        return g_rmem_supported ? 0 : -1;
+        return dma_initialized_status();
     }
 
     pthread_mutex_lock(&g_dma_mutex);
 
     if (g_dma_initialized) {
         pthread_mutex_unlock(&g_dma_mutex);
-        return g_rmem_supported ? 0 : -1;
+        return dma_initialized_status();
     }
+
+#if defined(PLATFORM_T23)
+    OpenIMPT23VpuAbi abi;
+    if (openimp_t23_vpu_select(&abi) != 0 ||
+        (abi == OPENIMP_T23_VPU_OEM80 && openimp_t23_ivdc_check_detached() != 0)) {
+        /* A new process has an empty local arena ledger. It must never
+         * allocate over a prior process's still-consumed IVDC workspace. */
+        pthread_mutex_unlock(&g_dma_mutex);
+        return -1;
+    }
+    g_t23_oem80 = abi == OPENIMP_T23_VPU_OEM80;
+#endif
 
     /* The bootloader is authoritative for the reserved arena.  Environment
      * values remain a useful explicit override for development profiles. */
@@ -854,6 +881,11 @@ int IMP_Free(uintptr_t phys_or_virt_addr) {
     if (phys_or_virt_addr == 0) {
         return -1;
     }
+#if defined(PLATFORM_T23)
+    /* Keep the registry and arena ledger intact after a kernel fault,
+     * including buffers released by encoder teardown before ISP preflight. */
+    if (g_t23_oem80 && openimp_t23_ivdc_kernel_healthy() != 0) return -1;
+#endif
 
     buf = claim_buffer(phys_or_virt_addr);
     if (buf == NULL) {
@@ -1086,6 +1118,13 @@ void DMA_RmemStreamStarted(void)
     pthread_mutex_unlock(&g_alloc_mutex);
     if (first || peak)
         rmem_log_peak(peak, size);
+}
+
+int DMA_Ensure_RMEM(void)
+{
+    if (dma_init() != 0) return -1;
+    if (!g_is_rmem || !g_rmem_virt_base) { errno = ENODEV; return -1; }
+    return 0;
 }
 
 int DMA_Is_RMEM(void)

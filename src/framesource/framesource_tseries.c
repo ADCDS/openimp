@@ -55,6 +55,9 @@
 #include "vbm_delay.h"
 #if defined(PLATFORM_T23)
 #include "t23/openimp_t23_persist.h"
+#include "t23/t23_ivdc_oem80.h"
+#include "t30/t23_vpu_abi.h"
+int openimp_t23_fs_exit_ready(void);
 #endif
 
 /* ---------------------------------------------------------------------
@@ -718,6 +721,10 @@ void FrameSourceExit(void)
         return;
     }
 
+
+#if defined(PLATFORM_T23)
+    if (openimp_t23_fs_exit_ready() != 0) return;
+#endif
     dev = fs_dev_base();
     if (*(int32_t *)((char *)gFrameSource + 0x14) >= 2) {
         imp_log_fun(6, IMP_Log_Get_Option(), 2, "Framesource",
@@ -747,6 +754,10 @@ typedef struct FsChnCtx {
     pthread_t   thread;
     sem_t       ready_sem;
     int         fd;
+#if defined(PLATFORM_T23)
+    int oem80, queue_may_exist, stream_may_run;
+    OpenIMPT23IvdcOem80 ivdc; /* Only FS0 opens/owns the global scratch. */
+#endif
     int         nocopy_depth;
     int         copy_type;
     int         source_chn;
@@ -763,6 +774,52 @@ typedef struct FsChnCtx {
 
 static FsChnCtx g_fs_ctx[FS_MAX_CHANNELS];
 static pthread_mutex_t g_fs_lock = PTHREAD_MUTEX_INITIALIZER;
+static int fs_close_chn_fd(int chn, FsChnCtx *ctx);
+#if defined(PLATFORM_T23)
+static int fs_oem_unwind(int chn, FsChnCtx *ctx);
+/* Pure preflight: never join a worker while holding the P0 system lock. */
+int openimp_t23_fs_exit_ready(void)
+{
+    int busy = 0;
+    const char *profile = getenv("OPENIMP_T23_DRIVER_ABI");
+    int oem = profile && !strcmp(profile, "oem80");
+    pthread_mutex_lock(&g_fs_lock);
+    for (int i = 0; i < FS_MAX_CHANNELS; ++i) {
+        FsChnCtx *ctx = &g_fs_ctx[i];
+        if (ctx->oem80) oem = 1;
+        if (ctx->oem80 && (ctx->created || ctx->fd >= 0 ||
+            ctx->queue_may_exist || ctx->stream_may_run ||
+            ctx->ivdc.installed || ctx->ivdc.allocated)) { busy = 1; break; }
+    }
+    pthread_mutex_unlock(&g_fs_lock);
+    if (busy) { errno = EBUSY; return -1; }
+    if (oem && openimp_t23_ivdc_kernel_healthy() != 0) return -1;
+    return 0;
+}
+static int fs_oem_dependents(void)
+{
+    for (int i = 1; i < FS_MAX_CHANNELS; ++i)
+        if (g_fs_ctx[i].oem80 && (g_fs_ctx[i].queue_may_exist ||
+            g_fs_ctx[i].stream_may_run || g_fs_ctx[i].thread != 0))
+            return 1;
+    return 0;
+}
+static int fs_oem_enable_ready(int chn)
+{
+    if (openimp_t23_ivdc_kernel_healthy() != 0) return -1;
+    FsChnCtx *ctx = &g_fs_ctx[chn];
+    if (ctx->queue_may_exist || ctx->stream_may_run || ctx->ivdc.installed ||
+        ctx->ivdc.allocated || (chn == 0 && fs_oem_dependents()) ||
+        (chn != 0 && (!g_fs_ctx[0].oem80 || !g_fs_ctx[0].created ||
+         fs_chan_get_state(0) != 2 ||
+         (g_fs_ctx[0].ivdc.mode && !g_fs_ctx[0].ivdc.installed)))) {
+        errno = EBUSY; return -1;
+    }
+    return 0;
+}
+
+#endif
+
 /* Flags shared between the API threads and the pooling worker, accessed
  * with FS_FLAG_LOAD/FS_FLAG_STORE (relaxed atomics: plain word loads and
  * stores on MIPS; ordering comes from g_fs_lock and pthread_join). */
@@ -1732,6 +1789,19 @@ int IMP_FrameSource_CreateChn(int chnNum, IMPFSChnAttr *chn_attr)
     chan = fs_channel_base(chnNum);
 
     if (*(int32_t *)(chan + 0x1c) == 0) {
+#if defined(PLATFORM_T23)
+        OpenIMPT23VpuAbi abi;
+        if (openimp_t23_vpu_select(&abi) != 0) {
+            pthread_mutex_unlock(&g_fs_lock); return -1;
+        }
+        FsChnCtx *ctx = &g_fs_ctx[chnNum];
+        ctx->ivdc.fd = -1;
+        ctx->oem80 = abi == OPENIMP_T23_VPU_OEM80;
+        if (ctx->oem80 && chnNum == 0 && openimp_t23_ivdc_create(&ctx->ivdc) != 0) {
+            ctx->oem80 = 0;
+            pthread_mutex_unlock(&g_fs_lock); return -1;
+        }
+#endif
         /* First-time create: initialize pthread primitives at +0x208, +0x1d8,
          * +0x278 and copy the attr block (0x50 bytes at +0x20). */
         pthread_mutex_init((pthread_mutex_t *)(chan + 0x208), NULL);
@@ -1846,6 +1916,13 @@ int IMP_FrameSource_DestroyChn(int chnNum)
         return 0;
     }
 
+#if defined(PLATFORM_T23)
+    if (g_fs_ctx[chnNum].oem80 &&
+        (fs_oem_unwind(chnNum, &g_fs_ctx[chnNum]) != 0 ||
+         (chnNum == 0 && openimp_t23_ivdc_destroy(&g_fs_ctx[chnNum].ivdc) != 0))) {
+        pthread_mutex_unlock(&g_fs_lock); return -1;
+    }
+#endif
     if (g_fs_ctx[chnNum].subject != NULL) {
         destroy_group(g_fs_ctx[chnNum].subject, 0);
         g_fs_ctx[chnNum].subject = NULL;
@@ -2100,7 +2177,11 @@ static int framesource_unbind(void *src_module, void *dst_module, void *output_p
 }
 
 static void fs_stop_worker(int chn, FsChnCtx *ctx);
-static void fs_close_chn_fd(int chn, FsChnCtx *ctx);
+#if defined(PLATFORM_T23)
+#define FS_ENABLE_OEM_FAILURE() do { if (ctx->oem80) goto oem_failed; } while (0)
+#else
+#define FS_ENABLE_OEM_FAILURE() do {} while (0)
+#endif
 
 int IMP_FrameSource_EnableChn(int chnNum)
 {
@@ -2134,6 +2215,19 @@ int IMP_FrameSource_EnableChn(int chnNum)
 
     pthread_mutex_lock(&g_fs_lock);
     if (fs_chan_get_state(chnNum) == 2) {
+#if defined(PLATFORM_T23)
+        FsChnCtx *existing = &g_fs_ctx[chnNum];
+        if (existing->oem80 && openimp_t23_ivdc_kernel_healthy() != 0) {
+            pthread_mutex_unlock(&g_fs_lock); return -1;
+        }
+        if (existing->oem80 && (!FS_FLAG_LOAD(existing->running) ||
+            !existing->stream_may_run || !existing->queue_may_exist ||
+            !existing->thread || existing->fd < 0 ||
+            FS_FLAG_LOAD(g_fs_thread_exited[chnNum]))) {
+            errno = EBUSY;
+            pthread_mutex_unlock(&g_fs_lock); return -1;
+        }
+#endif
         pthread_mutex_unlock(&g_fs_lock);
         return 0;
     }
@@ -2147,6 +2241,11 @@ int IMP_FrameSource_EnableChn(int chnNum)
 
     ctx = &g_fs_ctx[chnNum];
     chan = fs_channel_base(chnNum);
+#if defined(PLATFORM_T23)
+    if (ctx->oem80 && fs_oem_enable_ready(chnNum) != 0) {
+        pthread_mutex_unlock(&g_fs_lock); return -1;
+    }
+#endif
     /* SetFrameDepth stores it under the channel lock, not g_fs_lock */
     frame_depth = __atomic_load_n(&ctx->frame_depth, __ATOMIC_RELAXED);
     fs_trace("libimp/FS: enable start ch=%d state=%d ctx=%p fd=%d attr=%dx%d fmt=0x%x nrVBs=%d depth=%d\n",
@@ -2187,6 +2286,7 @@ int IMP_FrameSource_EnableChn(int chnNum)
     if (fs_set_format(ctx->fd, &fmt) < 0) {
         fs_trace("libimp/FS: enable set-format-fail ch=%d fd=%d\n", chnNum, ctx->fd);
         IMP_LOG_LIMITED(LOG_ERR, "Framesource", "EnableChn(%d): set format failed", chnNum);
+        FS_ENABLE_OEM_FAILURE();
         fs_close_chn_fd(chnNum, ctx);
         pthread_mutex_unlock(&g_fs_lock);
         return -1;
@@ -2213,6 +2313,7 @@ int IMP_FrameSource_EnableChn(int chnNum)
      * with SetMaxDelay > 0, so the pool shape above is unchanged without. */
     delay_max = ctx->max_delay;
     if (delay_max > 0 && vbm_count + delay_max > VBM_DELAY_MAX_FRAMES) {
+        FS_ENABLE_OEM_FAILURE();
         fs_close_chn_fd(chnNum, ctx);
         pthread_mutex_unlock(&g_fs_lock);
         IMP_LOG_LIMITED(LOG_ERR, "Framesource",
@@ -2224,9 +2325,15 @@ int IMP_FrameSource_EnableChn(int chnNum)
         vbm_count += delay_max;
     memcpy(vbm_fmt + 0x34, &vbm_count, sizeof(int));
 
+#if defined(PLATFORM_T23)
+    if (ctx->oem80 && chnNum == 0 &&
+        openimp_t23_ivdc_prepare(&ctx->ivdc, ctx->attr.picWidth, ctx->attr.picHeight) != 0)
+        goto oem_failed;
+#endif
     if (VBMCreatePool(chnNum, vbm_fmt, g_fs_vbm_ops, gFrameSource) < 0) {
         fs_trace("libimp/FS: enable VBMCreatePool-fail ch=%d\n", chnNum);
         IMP_LOG_LIMITED(LOG_ERR, "Framesource", "EnableChn(%d): cannot create the frame pool (rmem exhausted?)", chnNum);
+        FS_ENABLE_OEM_FAILURE();
         fs_close_chn_fd(chnNum, ctx);
         pthread_mutex_unlock(&g_fs_lock);
         return -1;
@@ -2234,6 +2341,7 @@ int IMP_FrameSource_EnableChn(int chnNum)
 
     if (VBMDelayConfigure(chnNum, delay_max > 0 ? delay_max : 0,
                           delay_max > 0 ? ctx->delay : 0) != 0) {
+        FS_ENABLE_OEM_FAILURE();
         VBMDestroyPool(chnNum);
         fs_close_chn_fd(chnNum, ctx);
         pthread_mutex_unlock(&g_fs_lock);
@@ -2253,10 +2361,14 @@ int IMP_FrameSource_EnableChn(int chnNum)
 #else
     requested_bufcnt = vbm_count + (frame_depth > 0 ? frame_depth : 0);
 #endif
+#if defined(PLATFORM_T23)
+    if (ctx->oem80) ctx->queue_may_exist = 1;
+#endif
     bufcnt = fs_set_buffer_count(ctx->fd, requested_bufcnt);
     if (bufcnt < 0) {
         fs_trace("libimp/FS: enable set-bufcnt-fail ch=%d req=%d\n", chnNum, requested_bufcnt);
         IMP_LOG_LIMITED(LOG_ERR, "Framesource", "EnableChn(%d): cannot set the buffer count", chnNum);
+        FS_ENABLE_OEM_FAILURE();
         VBMDestroyPool(chnNum);
         fs_close_chn_fd(chnNum, ctx);
         pthread_mutex_unlock(&g_fs_lock);
@@ -2265,6 +2377,10 @@ int IMP_FrameSource_EnableChn(int chnNum)
     fs_trace("libimp/FS: enable set-bufcnt-ok ch=%d req=%d got=%d\n",
              chnNum, requested_bufcnt, bufcnt);
 
+#if defined(PLATFORM_T23)
+    if (ctx->oem80 && chnNum == 0 &&
+        openimp_t23_ivdc_verify_attached(&ctx->ivdc) != 0) goto oem_failed;
+#endif
     *(int32_t *)(chan + 0x1c4) = ctx->fd;
 
     /* T21 folds the bank-count event into REQBUFS and has no 0x800456c5
@@ -2284,6 +2400,7 @@ int IMP_FrameSource_EnableChn(int chnNum)
             IMP_LOG_LIMITED(LOG_ERR, "Framesource",
                             "EnableChn(%d): cannot set the bank count %d",
                             chnNum, banks);
+            FS_ENABLE_OEM_FAILURE();
             VBMDestroyPool(chnNum);
             fs_close_chn_fd(chnNum, ctx);
             pthread_mutex_unlock(&g_fs_lock);
@@ -2305,6 +2422,7 @@ int IMP_FrameSource_EnableChn(int chnNum)
             fs_trace("libimp/FS: enable set-banks-fail ch=%d fd=%d banks=%d depth=%d\n",
                      chnNum, ctx->fd, banks, frame_depth);
             IMP_LOG_LIMITED(LOG_ERR, "Framesource", "EnableChn(%d): cannot set the bank count", chnNum);
+            FS_ENABLE_OEM_FAILURE();
             VBMFlushFrame(chnNum);
             fs_close_chn_fd(chnNum, ctx);
             VBMDestroyPool(chnNum);
@@ -2321,6 +2439,7 @@ int IMP_FrameSource_EnableChn(int chnNum)
     if (queued_ok < 0) {
         fs_trace("libimp/FS: enable VBMFillPool-fail ch=%d\n", chnNum);
         IMP_LOG_LIMITED(LOG_ERR, "Framesource", "EnableChn(%d): cannot queue the frame buffers", chnNum);
+        FS_ENABLE_OEM_FAILURE();
         fs_close_chn_fd(chnNum, ctx);
         VBMDestroyPool(chnNum);
         pthread_mutex_unlock(&g_fs_lock);
@@ -2343,6 +2462,7 @@ int IMP_FrameSource_EnableChn(int chnNum)
             IMP_LOG_LIMITED(LOG_ERR, "Framesource", "EnableChn(%d): cannot start the capture thread", chnNum);
             ctx->thread = 0;
             FS_FLAG_STORE(ctx->running, 0);
+            FS_ENABLE_OEM_FAILURE();
             fs_stream_off(ctx->fd);
             VBMFlushFrame(chnNum);
             fs_close_chn_fd(chnNum, ctx);
@@ -2361,13 +2481,22 @@ int IMP_FrameSource_EnableChn(int chnNum)
     fs_trace("libimp/FS: enable thread-ready-skip ch=%d fd=%d\n", chnNum, ctx->fd);
 
     usleep(5000);
-    ISP_EnsureLinkStreamOn(0);
+#if defined(PLATFORM_T23)
+    if (ctx->oem80) {
+        if (ISP_EnsureLinkStreamOn(0) != 0) goto oem_failed;
+    } else
+#endif
+        ISP_EnsureLinkStreamOn(0);
 
+#if defined(PLATFORM_T23)
+    if (ctx->oem80) ctx->stream_may_run = 1;
+#endif
     if (fs_stream_on(ctx->fd) < 0) {
         fs_trace("libimp/FS: enable stream-on-fail ch=%d fd=%d\n", chnNum, ctx->fd);
         IMP_LOG_LIMITED(LOG_ERR, "Framesource", "EnableChn(%d): STREAMON failed", chnNum);
         /* The worker waits for the ENABLED state: it leaves at once. */
         FS_FLAG_STORE(ctx->running, 0);
+        FS_ENABLE_OEM_FAILURE();
         fs_stop_worker(chnNum, ctx);
         VBMFlushFrame(chnNum);
         fs_close_chn_fd(chnNum, ctx);
@@ -2428,6 +2557,7 @@ int IMP_FrameSource_EnableChn(int chnNum)
         IMP_LOG_LIMITED(LOG_ERR, "Framesource",
                         "EnableChn(0): no frame buffer could be queued to the ISP driver");
         FS_FLAG_STORE(ctx->running, 0);
+        FS_ENABLE_OEM_FAILURE();
         fs_stream_off(ctx->fd);
         fs_stop_worker(chnNum, ctx);
         VBMFlushFrame(chnNum);
@@ -2443,7 +2573,20 @@ int IMP_FrameSource_EnableChn(int chnNum)
     pthread_mutex_unlock(&g_fs_lock);
     DMA_RmemStreamStarted();
     return 0;
+#if defined(PLATFORM_T23)
+oem_failed: {
+    int saved = errno ? errno : EIO;
+    if (fs_oem_unwind(chnNum, ctx) != 0)
+        fprintf(stderr, "[IVDC OEM80] channel %d cleanup uncertain; retained DMA/FDs, verify detach or reset camera\n", chnNum);
+    pthread_mutex_unlock(&g_fs_lock);
+    errno = saved;
+    return -1;
 }
+#endif
+
+}
+
+#undef FS_ENABLE_OEM_FAILURE
 
 /* After STREAMOFF the worker leaves within one select timeout (25 ms) plus
  * the delivery of a frame it had already dequeued. Anything near a second
@@ -2503,17 +2646,59 @@ static void fs_stop_worker(int chn, FsChnCtx *ctx)
 /* Unpublish the channel's fd (release_Frame reads it from +0x1c4) before
  * closing it, so a late release cannot QBUF on it or on its reuse; a
  * release that read it just before is let finish first. */
-static void fs_close_chn_fd(int chn, FsChnCtx *ctx)
+static int fs_close_chn_fd(int chn, FsChnCtx *ctx)
 {
     int fd = ctx->fd;
-
-    if (fd < 0)
-        return;
+#if defined(PLATFORM_T23)
+    if (ctx->oem80) {
+        if (ctx->stream_may_run) { errno = EBUSY; return -1; }
+        if (chn == 0 && (ctx->ivdc.installed || ctx->queue_may_exist) &&
+            fs_oem_dependents()) { errno = EBUSY; return -1; }
+        if (fd >= 0) {
+            *(int32_t *)(fs_channel_base(chn) + 0x1c4) = -1;
+            VBMWaitReleases(chn);
+            if (chn == 0 && (ctx->ivdc.installed || ctx->queue_may_exist)) {
+                if (openimp_t23_ivdc_detach(&ctx->ivdc, fd) != 0) return -1;
+            } else if (ctx->queue_may_exist && fs_set_buffer_count(fd, 0) < 0)
+                return -1;
+            ctx->queue_may_exist = 0;
+            ctx->fd = -1;
+            fs_close_device(fd);
+        } else if (ctx->queue_may_exist || ctx->ivdc.installed) {
+            errno = EBUSY; return -1;
+        }
+        if (chn == 0 && openimp_t23_ivdc_release(&ctx->ivdc) != 0) return -1;
+        return 0;
+    }
+#endif
+    if (fd < 0) return 0;
     *(int32_t *)(fs_channel_base(chn) + 0x1c4) = -1;
     ctx->fd = -1;
     VBMWaitReleases(chn);
     fs_close_device(fd);
+    return 0;
 }
+#if defined(PLATFORM_T23)
+/* g_fs_lock is held. This path also handles CREATED channels whose Enable
+ * failed; the caller may go directly to DestroyChn without DisableChn. */
+static int fs_oem_unwind(int chn, FsChnCtx *ctx)
+{
+    if (openimp_t23_ivdc_kernel_healthy() != 0) return -1;
+    if (chn == 0 && (ctx->ivdc.installed || ctx->queue_may_exist) &&
+        fs_oem_dependents()) { errno = EBUSY; return -1; }
+    FS_FLAG_STORE(ctx->running, 0);
+    if (ctx->stream_may_run) {
+        if (ctx->fd < 0 || fs_stream_off(ctx->fd) < 0) return -1;
+        ctx->stream_may_run = 0;
+    }
+    fs_stop_worker(chn, ctx);
+    if (fs_close_chn_fd(chn, ctx) != 0) return -1;
+    VBMFlushFrame(chn);
+    VBMDestroyPoolParked(chn);
+    if (ctx->created) fs_chan_set_state(chn, 1);
+    return 0;
+}
+#endif
 
 #if defined(PLATFORM_T31)
 /* Stop the stream of every channel still enabled. Called on the way out of
@@ -2565,6 +2750,16 @@ int IMP_FrameSource_DisableChn(int chnNum)
 
     pthread_mutex_lock(&g_fs_lock);
     ctx = &g_fs_ctx[chnNum];
+#if defined(PLATFORM_T23)
+    if (ctx->oem80) {
+        if (!ctx->created && fs_chan_get_state(chnNum) == 0) {
+            pthread_mutex_unlock(&g_fs_lock); return 0;
+        }
+        int result = fs_oem_unwind(chnNum, ctx);
+        pthread_mutex_unlock(&g_fs_lock);
+        return result;
+    }
+#endif
     if (fs_chan_get_state(chnNum) != 2) {
         pthread_mutex_unlock(&g_fs_lock);
         return 0;

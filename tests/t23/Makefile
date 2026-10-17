@@ -27,6 +27,9 @@ AUDIO_ABI := $(BUILD)/t23-audio-abi-test
 HEVC_POLICY := $(BUILD)/t23-hevc-policy-test
 VPU_ABI := $(BUILD)/t23-vpu-abi-test
 ISP_OEM80 := $(BUILD)/t23-isp-oem80-test
+IVDC_OEM80 := $(BUILD)/t23-ivdc-oem80-test
+IVDC_FS := $(BUILD)/t23-ivdc-fs-test
+IVDC_DMA := $(BUILD)/t23-ivdc-dma-test
 HELIX_NATIVE_SOURCES := $(PROJECT_DIR)/src/t30/t30_helix_encoder.c \
 	$(PROJECT_DIR)/src/t30/t23_vpu_abi.c \
 	$(PROJECT_DIR)/src/t21/t21_h264_descriptor.c \
@@ -43,7 +46,7 @@ HELIX_NATIVE_SOURCES := $(PROJECT_DIR)/src/t30/t30_helix_encoder.c \
 HELIX_INCLUDES := -DPLATFORM_T23 '-D_Static_assert(c,m)=' -Wno-unused-result \
 	-I$(PROJECT_DIR)/include -I$(PROJECT_DIR)/src
 
-.PHONY: check clean hevc-policy device t23tune vpu-abi oem80
+.PHONY: check clean hevc-policy device t23tune vpu-abi oem80 ivdc-oem80
 
 $(VPU_ABI): vpu_abi_test.c $(PROJECT_DIR)/src/t30/t23_vpu_abi.c \
 	$(PROJECT_DIR)/src/t30/t23_vpu_abi.h
@@ -60,14 +63,47 @@ $(ISP_OEM80): isp_oem80_test.c $(PROJECT_DIR)/src/t23/t23_isp_oem80.c \
 	$(CC) $(CFLAGS) -I$(PROJECT_DIR)/src isp_oem80_test.c \
 		$(PROJECT_DIR)/src/t23/t23_isp_oem80.c -Wl,--wrap=ioctl -o $@
 
+$(IVDC_OEM80): ivdc_oem80_test.c $(PROJECT_DIR)/src/t23/t23_ivdc_oem80.c \
+	$(PROJECT_DIR)/src/t23/t23_ivdc_oem80.h $(PROJECT_DIR)/src/dma_alloc.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(PROJECT_DIR)/src ivdc_oem80_test.c \
+		$(PROJECT_DIR)/src/t23/t23_ivdc_oem80.c -Wl,--wrap=ioctl \
+		-Wl,--wrap=open -Wl,--wrap=close -Wl,--wrap=fopen -o $@
+
+# Disable only the diagnostic constructor so section GC links the exercised
+# lifecycle, not every unrelated capture callback. Wire-layout tests are MIPS.
+$(IVDC_FS): ivdc_fs_test.c ivdc_oem80_test.c $(PROJECT_DIR)/src/framesource/framesource_tseries.c \
+	$(PROJECT_DIR)/src/t23/t23_ivdc_oem80.c $(PROJECT_DIR)/src/t40/openimp_p0.c \
+	$(PROJECT_DIR)/src/t23/t23_ivdc_oem80.h $(PROJECT_DIR)/src/dma_alloc.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(HELIX_INCLUDES) -Dconstructor=unused \
+		-Wno-pointer-to-int-cast -Wno-int-to-pointer-cast -ffunction-sections -fdata-sections \
+		ivdc_fs_test.c $(PROJECT_DIR)/src/t23/t23_ivdc_oem80.c $(PROJECT_DIR)/src/t40/openimp_p0.c \
+		-pthread -Wl,--gc-sections -Wl,--wrap=ioctl -Wl,--wrap=open \
+		-Wl,--wrap=close -Wl,--wrap=fopen -o $@
+
+$(IVDC_DMA): ivdc_dma_test.c $(PROJECT_DIR)/src/dma_alloc.c $(PROJECT_DIR)/src/t30/t23_vpu_abi.c \
+	$(PROJECT_DIR)/src/dma_alloc.h $(PROJECT_DIR)/src/t23/t23_ivdc_oem80.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DPLATFORM_T23 -I$(PROJECT_DIR)/src ivdc_dma_test.c \
+		$(PROJECT_DIR)/src/t30/t23_vpu_abi.c -pthread -Wl,--wrap=open -o $@
+
+ivdc-oem80: $(IVDC_OEM80) $(IVDC_FS) $(IVDC_DMA)
+	$(IVDC_OEM80)
+	$(IVDC_FS)
+	$(IVDC_DMA)
+
 # The code under test passes pointers through 32-bit words, as on MIPS:
 # build without PIE so the test's data lies below 4 GiB.
 check: $(ISP_TUNING_TEST_BIN) $(ACODEC_TEST_BIN) $(ZERO_COPY_TEST_BIN) \
 	$(FAKE_HELIXD_BIN) $(IVS_DIGEST_T31) $(IVS_DIGEST_T23) \
 	$(IVS_FRAMEWORK) $(IVS_MOVE_V2) $(JPEG_QL) $(HELIX_DESCRIPTOR) $(HELIX_STREAM) \
-	$(RMEM_LAYOUT) $(OSD_PACK) $(AUDIO_ABI) $(VPU_ABI) $(ISP_OEM80)
+	$(RMEM_LAYOUT) $(OSD_PACK) $(AUDIO_ABI) $(VPU_ABI) $(ISP_OEM80) $(IVDC_OEM80) $(IVDC_FS) $(IVDC_DMA)
 	$(VPU_ABI)
 	$(ISP_OEM80)
+	$(IVDC_OEM80)
+	$(IVDC_FS)
+	$(IVDC_DMA)
 	$(MAKE) oem80
 	$(HELIX_DESCRIPTOR)
 	$(RMEM_LAYOUT)

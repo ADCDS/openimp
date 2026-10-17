@@ -3,10 +3,12 @@
 This fork adds an explicit compatibility profile for the JOOAN W3-U / JA-A12,
 T23N with CV2005/CV2005S1, retaining its OEM kernel and modules.
 
-**Status:** the source-only uClibc library builds and loads on the physical
-camera. OEM80 channel request/release passes. H.264/JPEG pipelines pass against
-independent fake drivers. Fresh sensor capture and real hardware encoding
-remain unqualified; this is an initial driver-interface port.
+**Status:** source-only builds and boundary tests pass. The OEM80 reserved-rmem
+IVDC workspace was allocated, adopted by the real driver, detached and freed
+in two native probe cycles. The first cycle was kernel-clean; the second hit a
+secondary AE kernel fault despite registering both sensors. Stable native
+capture remains unqualified. The combined daemon also stops at an unported
+secondary-FPS ioctl. See the [IVDC validation receipt](re/ja-a12-ivdc-validation-20261017.json).
 
 ## Build and selection
 
@@ -67,8 +69,9 @@ records; 8/9 use four-byte cookies. The new adapter exposes only channel
 operations 0/1/2 and register read 7.
 
 The existing full-NV12 input requirement, cache operations, retained VPU fd,
-and `vlist=0` before CLOSE are preserved. OEM80 does not implement the IVDC
-direct pipeline. The kernel flushes a fixed 1 MiB descriptor range; encoder
+and `vlist=0` before CLOSE are preserved. OEM80 provisions the kernel IVDC scratch workspace. Native encoding of
+IVDC line-ring input is not implemented; the encoder still requires complete
+NV12 frames. The kernel flushes a fixed 1 MiB descriptor range; encoder
 tests require exclusive reserved-memory ownership.
 
 ## ISP boundary recovered from the module
@@ -105,16 +108,70 @@ creation/binding and frame-channel format setup. REQBUFS then failed with
 ENOMEM while IVDC requested its internal workspace from normal RAM. Although
 about 14 MiB was free, no contiguous 1 MiB block remained. This is separate from
 the capture frame pool in reserved memory. The OEM supplies a reserved-memory
-IVDC workspace through `/dev/misc-ivdc`; that ownership-aware path remains to
-be implemented. The single registered sensor also left slot 1 without AE
+IVDC workspace through `/dev/misc-ivdc`; the ownership-aware implementation
+is described below. The single registered sensor also left slot 1 without AE
 attributes, producing a separate kernel Oops. See the
 [capture-interface ledger](re/ja-a12-capture-ledger.json) for the recovered
 workspace commands, sizing and release sequence. A subsequent adapter change
-registers both physical slots while publishing only sensor 0. OEM80 now also
+registers both physical slots while publishing only sensor 0. The subsequent
+repeat-cycle fault shows that registration alone does not complete secondary
+AE activation or initialization. OEM80 now also
 records successful global sensor/link startup so FrameSource does not repeat
 those operations.
 The [physical-trial receipt](re/ja-a12-camera-trial-20261017.json) separates the
 failed capture run from the subsequent source changes and guarded retry.
+
+## Reserved-memory IVDC workspace lifecycle
+
+OEM80 FS0 caches the driver's direct mode during CreateChn. Before allocating
+its frame pool or requesting buffers, it reads the line count and allocates a
+separate `ivdcwork` extent from reserved rmem. The normal-RAM fallback is not
+used for this resource. A 640-pixel channel with the retained 540-line setting
+uses 622,080 bytes. The allocator reserves whole pages; the helper validates
+rmem provenance, page alignment, size, and the complete physical extent below
+the driver's 512 MiB KSEG0 limit. It checks WB+INV before publishing the address
+through `SET_PADDR`.
+
+After positive REQBUFS, the driver must report the same physical address in
+`/proc/jz/isp/isp-ivdc` before frames are queued. This scratch allocation does
+not replace capture buffers or relax the native encoder's full-NV12 checks.
+Nonzero channels require FS0 to be enabled; dependent channels must stop before
+FS0 releases the shared workspace.
+
+Cleanup records queue/stream attempts before their ioctls. It issues STREAMOFF
+only if STREAMON was attempted, joins the worker, releases the queue with
+REQBUFS(0), verifies that the consumed DDR address is zero, and then clears any
+unconsumed pending SET_PADDR. The frame FD closes before checked cache
+maintenance and DMA release. The cached misc FD closes at DestroyChn.
+
+Failure at any uncertain detach edge retains the descriptor, allocation ledger
+and necessary FDs. DestroyChn retries partial EnableChn cleanup. Global system
+exit and ISP teardown refuse live FrameSource resources instead of discarding
+them. Fresh ISP and DMA initialization reject an already-consumed workspace.
+Kernel Oops taint also blocks allocation, detach, free and global teardown;
+resource-state observations in a damaged kernel are not accepted as reuse proof.
+Lifecycle API calls must be serialized by the consumer. Unloading the library
+or starting another process loses the local allocation ledger and is **not**
+recovery from an uncertain detach; verify detachment or reset the device first.
+
+`make -C tests/t23 -j2 ivdc-oem80` exercises checked sizes, cache errors,
+partial publication, malformed ownership reports, stale allocation rejection,
+primary/dependent ordering, and retained cleanup state through the actual
+public DisableChn/DestroyChn/SystemExit paths. The seeded cleanup tests do not
+exercise the full capture worker or every EnableChn error path. Native MIPS and
+sanitizer runs supplement these host tests; physical results are recorded
+separately. The native probe is built as `build/t23/openimp-t23-ivdc-probe`:
+
+```sh
+OPENIMP_T23_DRIVER_ABI=oem80 OPENIMP_T23_ENCODER=native \
+OPENIMP_T23_NATIVE_FALLBACK=0 ./openimp-t23-ivdc-probe --run /private/path/libimp.so
+```
+
+Arrange exclusive media and watchdog ownership externally. The probe refuses
+an existing media owner and uses existing sensor timings. It holds the process
+and library mapping on failed teardown. Kernel health must remain clean; a
+successful resource protocol does not establish fresh capture or repeat-safe
+AE operation.
 
 ## Evidence and validation
 

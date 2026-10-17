@@ -53,6 +53,8 @@ static char *bpath;
 #if defined(PLATFORM_T23)
 #include "t30/t23_vpu_abi.h"
 #include "t23/t23_isp_oem80.h"
+#include "t23/t23_ivdc_oem80.h"
+extern int openimp_t23_fs_exit_ready(void);
 static OpenIMPT23VpuAbi t23_driver_abi;
 static OpenIMPT23IspOem80 t23_oem_isp;
 #endif
@@ -130,6 +132,8 @@ int IMP_ISP_Open(void)
 #if defined(PLATFORM_T23)
     if (!gISP && openimp_t23_vpu_select(&t23_driver_abi) != 0)
         return -1;
+    if (!gISP && t23_driver_abi == OPENIMP_T23_VPU_OEM80 &&
+        openimp_t23_ivdc_check_detached() != 0) return -1;
 #endif
 
     kmsg_trace("libimp/ISP: Open entry gISP=%p\n", (void *)gISP);
@@ -205,6 +209,10 @@ int IMP_ISP_Open(void)
 
 int IMP_ISP_Close(void)
 {
+#if defined(PLATFORM_T23)
+    if (t23_driver_abi == OPENIMP_T23_VPU_OEM80 &&
+        (openimp_t23_ivdc_kernel_healthy() != 0 || openimp_t23_fs_exit_ready() != 0)) return -1;
+#endif
     ISPDevice *gISP_1 = gISP;
 
     if (gISP_1 == NULL) {
@@ -4624,6 +4632,10 @@ int IMP_ISP_EnableSensor(void)
 
 int IMP_ISP_DisableSensor(void)
 {
+#if defined(PLATFORM_T23)
+    if (t23_driver_abi == OPENIMP_T23_VPU_OEM80 &&
+        (openimp_t23_ivdc_kernel_healthy() != 0 || openimp_t23_fs_exit_ready() != 0)) return -1;
+#endif
     ISPDevice *isp;
     int32_t sensor_index = -1;
     int32_t destroy_arg = -1;
@@ -4928,6 +4940,10 @@ int IMP_ISP_AddSensor(IMPSensorInfo *pinfo)
 
 int IMP_ISP_DelSensor(IMPSensorInfo *pinfo)
 {
+#if defined(PLATFORM_T23)
+    if (t23_driver_abi == OPENIMP_T23_VPU_OEM80 &&
+        (openimp_t23_ivdc_kernel_healthy() != 0 || openimp_t23_fs_exit_ready() != 0)) return -1;
+#endif
     ISPDevice *isp = (ISPDevice *)gISP;
     uint8_t *isp_b = (uint8_t *)isp;
 
@@ -5172,6 +5188,10 @@ int IMP_ISP_EnableTuning(void)
 
 int IMP_ISP_DisableTuning(void)
 {
+#if defined(PLATFORM_T23)
+    if (t23_driver_abi == OPENIMP_T23_VPU_OEM80 &&
+        (openimp_t23_ivdc_kernel_healthy() != 0 || openimp_t23_fs_exit_ready() != 0)) return -1;
+#endif
     ISPDevice *isp = (ISPDevice *)gISP;
     if (isp == NULL) return 0;
 

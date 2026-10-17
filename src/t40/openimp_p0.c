@@ -22,6 +22,10 @@
 #define OPENIMP_HELIX_JPEG 1
 #endif
 
+#if defined(PLATFORM_T23)
+extern int openimp_t23_fs_exit_ready(void);
+#endif
+
 #define OPENIMP_P0_MAGIC             0x50305434U /* "P0T4" */
 #define OPENIMP_MAX_FS_CHANNELS      16
 #define OPENIMP_MAX_ENCODER_GROUPS   16
@@ -391,6 +395,9 @@ int IMP_System_Init(void)
 int IMP_System_Exit(void)
 {
     int root;
+#if defined(PLATFORM_T23)
+    if (openimp_t23_fs_exit_ready() != 0) return -1;
+#endif
 
     lock_state();
     if (!state.initialized) {
