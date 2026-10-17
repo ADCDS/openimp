@@ -156,11 +156,16 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
     node = va_arg(args, uint32_t *);
     va_end(args);
     assert(fd == FAKE_FD);
-    if (request == 0xc0586300u) {
+#if defined(TEST_VPU_ABI_OEM80)
+    const unsigned long base = 0xc0506300u;
+#else
+    const unsigned long base = 0xc0586300u;
+#endif
+    if (request == base) {
         node[0] = 0x8000u;          /* clist */
         return 0;
     }
-    assert(request == 0xc0586301u);
+    assert(request == (base | 1u));
     return 0;
 }
 

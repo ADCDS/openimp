@@ -22,7 +22,10 @@ if [ -z "$firmware_dir" ]; then
     done
 fi
 
-: "${firmware_dir:?set THINGINO_DIR to a Thingino firmware checkout}"
+if [ -z "$firmware_dir" ] && [ -z "${TOOLCHAIN_PREFIX:-}" ]; then
+    echo "set THINGINO_DIR or TOOLCHAIN_PREFIX to the target cross compiler prefix" >&2
+    exit 1
+fi
 target_name=${T23_TARGET:-cinnado_d1_t23n_sc2336_atbm6012bx-3.10.14-uclibc}
 target_dir=${T23_TARGET_DIR:-"$firmware_dir/output/master/$target_name"}
 toolchain_prefix=${TOOLCHAIN_PREFIX:-"$target_dir/host/bin/mipsel-linux"}
@@ -36,6 +39,9 @@ base_flags="-std=gnu99 -O2 -mabi=32 -march=mips32r2 -mabicalls"
 base_flags="$base_flags -fPIC -G0 -fno-stack-protector -DPLATFORM_T23"
 # Rootfs size: per-function/-datum sections so the link can drop what is unreferenced.
 base_flags="$base_flags -ffunction-sections -fdata-sections"
+# Match the retained OEM libc with a multilib compiler, e.g. -muclibc.
+base_flags="$base_flags ${T23_EXTRA_CFLAGS:-}"
+link_flags=${T23_EXTRA_LDFLAGS:-}
 # JPEG runs on the Helix VPU (src/t30/helix_jpeg.c).  OPENIMP_SW_JPEG=1 also
 # builds the software baseline encoder in, as a fallback for pictures the VPU
 # cannot take and for OPENIMP_HELIX_HW_JPEG=0 at run time; the default leaves
@@ -117,7 +123,9 @@ compile t23_encoder src/t23/openimp_t23_encoder.c -Werror
 compile t23_decoder src/t23/openimp_t23_decoder.c -Werror
 compile t23_misc src/t23/openimp_t23_misc.c -Werror
 # Native Helix H.264: the T30/T21 encoder with the T21-family command list.
-compile t23_helix_native src/t30/t30_helix_encoder.c -Werror
+compile t23_helix_native src/t30/t30_helix_encoder.c
+compile t23_vpu_abi src/t30/t23_vpu_abi.c -Werror
+compile t23_isp_oem80 src/t23/t23_isp_oem80.c -Werror
 compile t23_h264_descriptor src/t21/t21_h264_descriptor.c -Werror
 compile t23_h264_common src/t30/h264enc/common.c -Werror
 compile t23_h264_cabac src/t30/h264enc/cabac.c -Werror
@@ -128,7 +136,7 @@ compile t23_eprc src/eprc/eprc.c -Werror -ffp-contract=off
 compile t23_eprc_mbrc src/eprc/eprc_mbrc.c -Werror -ffp-contract=off
 compile t23_helix_jpeg src/t30/helix_jpeg.c -Werror
 
-"$compiler" -shared -nostartfiles \
+"$compiler" $link_flags -shared -nostartfiles \
     -Wl,-soname,libimp.so -Wl,--gc-sections \
     -Wl,--version-script="$project_dir/src/t40/libimp.map" \
     -o "$output_dir/libimp.so" \
@@ -153,7 +161,7 @@ compile t23_helix_jpeg src/t30/helix_jpeg.c -Werror
     "$output_dir/core_imp_log.o" \
     "$output_dir/core_video_drop.o" \
     "$output_dir/framesource.o" \
-    "$output_dir/isp.o" \
+    "$output_dir/isp.o" "$output_dir/t23_isp_oem80.o" \
     "$output_dir/isp_t23_tuning.o" \
     "$output_dir/t23_compat.o" \
     "$output_dir/t23_state.o" \
@@ -175,7 +183,7 @@ compile t23_helix_jpeg src/t30/helix_jpeg.c -Werror
     "$output_dir/t23_encoder.o" \
     "$output_dir/t23_decoder.o" \
     "$output_dir/t23_misc.o" \
-    "$output_dir/t23_helix_native.o" \
+    "$output_dir/t23_helix_native.o" "$output_dir/t23_vpu_abi.o" \
     "$output_dir/t23_h264_descriptor.o" \
     "$output_dir/t23_h264_common.o" \
     "$output_dir/t23_h264_cabac.o" \
@@ -197,7 +205,7 @@ compile t23_helix_jpeg src/t30/helix_jpeg.c -Werror
 # docs/T23_NATIVE_HELIX.md).
 "$compiler" $base_flags $repo_includes -Wall -Wextra -Werror \
     "$project_dir/tools/t23_helix_selftest.c" \
-    "$output_dir/t23_helix_native.o" "$output_dir/t23_h264_descriptor.o" \
+    "$output_dir/t23_helix_native.o" "$output_dir/t23_vpu_abi.o" "$output_dir/t23_h264_descriptor.o" \
     "$output_dir/t23_h264_common.o" "$output_dir/t23_h264_cabac.o" \
     "$output_dir/t23_h264_set.o" "$output_dir/t23_h264_slice.o" \
     "$output_dir/t23_rate_control.o" "$output_dir/t23_eprc.o" \

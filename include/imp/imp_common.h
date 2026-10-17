@@ -340,7 +340,7 @@ typedef struct {
 #if defined(PLATFORM_T23)
 typedef struct {
     char name[32];                          /**< Sensor name (0-31) */
-    int reserved1;                          /**< Reserved/padding (32-35) */
+    int reserved1;                          /**< OEM80: low 16 bits select sensor 0/1 (32-35) */
     TXSensorControlBusType cbus_type;       /**< Control bus type at offset 0x24 (36-39) */
     TXSNSI2CConfig i2c;                     /**< I2C: type[20] + addr[4] = 24 bytes (40-63) */
     int i2c_adapter;                        /**< I2C adapter at offset 0x40 (64-67) */

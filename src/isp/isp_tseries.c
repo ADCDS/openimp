@@ -50,6 +50,13 @@
 #endif
 
 static char *bpath;
+#if defined(PLATFORM_T23)
+#include "t30/t23_vpu_abi.h"
+#include "t23/t23_isp_oem80.h"
+static OpenIMPT23VpuAbi t23_driver_abi;
+static OpenIMPT23IspOem80 t23_oem_isp;
+#endif
+
 #if defined(PLATFORM_T31)
 void openimp_t31_isp_tuning_enabled(void);
 void openimp_t31_movestate_block(uint8_t ae[0x70], const uint8_t cur[0x70],
@@ -119,6 +126,11 @@ static void kmsg_trace(const char *fmt, ...);
 int IMP_ISP_Open(void)
 {
     int32_t result = 0;
+
+#if defined(PLATFORM_T23)
+    if (!gISP && openimp_t23_vpu_select(&t23_driver_abi) != 0)
+        return -1;
+#endif
 
     kmsg_trace("libimp/ISP: Open entry gISP=%p\n", (void *)gISP);
 
@@ -207,6 +219,11 @@ int IMP_ISP_Close(void)
         return -1;
     }
 
+#if defined(PLATFORM_T23)
+    if (t23_driver_abi == OPENIMP_T23_VPU_OEM80 &&
+        openimp_t23_oem80_isp_close(&t23_oem_isp) != 0)
+        return -1;
+#endif
     close(gISP_1->fd);
     free(gISP);
     gISP = NULL;
@@ -249,12 +266,19 @@ int IMP_ISP_SetDefaultBinPath(const char *arg1)
         char *bpath_1 = bpath;
 
         if (bpath_1 == NULL) {
-            char *bpath_2 = malloc(0x40);
+            char *bpath_2 = calloc(1,
+#if defined(PLATFORM_T23)
+                                    128
+#else
+                                    64
+#endif
+                                   );
             bpath = bpath_2;
             bpath_1 = bpath_2;
         }
 
-        sprintf(bpath_1, arg1);
+        if (!bpath_1) return -1;
+        snprintf(bpath_1, 64, "%s", arg1);
         imp_log_fun(4, IMP_Log_Get_Option(), 2,
             "Bin file path set successfully.new bin path:%s\n",
             "/home/user/git/proj/sdk-lv3/src/imp/isp/isp_tseries.c", 0x179,
@@ -4724,6 +4748,15 @@ int IMP_ISP_AddSensor(IMPSensorInfo *pinfo)
             "Sensor is runing, please Call 'EmuISP_DisableSensor' firstly\n");
         return -1;
     }
+#if defined(PLATFORM_T23)
+    if (t23_driver_abi == OPENIMP_T23_VPU_OEM80) {
+        int ret = openimp_t23_oem80_sensor_add(&t23_oem_isp, isp->fd,
+                                               pinfo, bpath, isp->wdr_mode == 1);
+        free(bpath); bpath = NULL;
+        if (ret == 0) memcpy(isp->sensor_info, pinfo, sizeof(isp->sensor_info));
+        return ret;
+    }
+#endif
     if (ioctl(isp->fd, 0x805056c1U, pinfo) != 0) {
         imp_log_fun(6, IMP_Log_Get_Option(), 2, "IMP-ISP",
             "/home/user/git/proj/sdk-lv3/src/imp/isp/isp_tseries.c", 0x1a7,
@@ -4902,6 +4935,15 @@ int IMP_ISP_DelSensor(IMPSensorInfo *pinfo)
             "Sensor is runing, please Call 'EmuISP_DisableSensor' firstly\n");
         return -1;
     }
+#if defined(PLATFORM_T23)
+    if (t23_driver_abi == OPENIMP_T23_VPU_OEM80) {
+        int ret = openimp_t23_oem80_sensor_del(&t23_oem_isp, isp->fd, pinfo);
+        if (ret == 0 && pinfo &&
+            !memcmp(isp->sensor_info + 32, (const unsigned char *)pinfo + 32, 2))
+            memset(isp->sensor_info, 0, sizeof(isp->sensor_info));
+        return ret;
+    }
+#endif
     int32_t sel = -1;
     if (ioctl(isp->fd, 0xc0045627, &sel) != 0) {
         imp_log_fun(6, IMP_Log_Get_Option(), 2, "IMP-ISP",

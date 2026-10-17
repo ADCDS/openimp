@@ -34,6 +34,7 @@
 #include "t30/t30_h264_level.h"
 #if defined(PLATFORM_T23)
 #include "t30/t23_helix_bs.h"
+#include "t23_vpu_abi.h"
 #endif
 #if (defined(PLATFORM_T21) && !defined(PLATFORM_T20)) || \
     defined(PLATFORM_T23)
@@ -150,6 +151,9 @@ static const uint8_t t21_high_profile_pps[] = {
 };
 #endif
 
+#if defined(PLATFORM_T23)
+typedef OpenIMPT23VpuNode T30ChannelNode;
+#else
 typedef struct {
     uint32_t clist;
     uint32_t vlist;
@@ -178,6 +182,7 @@ typedef struct {
     uint64_t time;
 #endif
 } T30ChannelNode;
+#endif
 
 #if defined(PLATFORM_T23)
 _Static_assert(sizeof(T30ChannelNode) == 88,
@@ -278,6 +283,9 @@ typedef struct {
 
 struct T30HelixEncoder {
     int fd;
+#if defined(PLATFORM_T23)
+    OpenIMPT23VpuAbi vpu_abi;
+#endif
     /* IMP_Encoder_InsertUserData: SEI payloads for the next access unit */
     uint32_t ud_count;
     uint32_t ud_len[T30_USER_DATA_MAX_CNT];
@@ -404,6 +412,18 @@ struct T30HelixEncoder {
     int chroma_qp_warned;
 #endif
 };
+
+static int t30_channel_ioctl(T30HelixEncoder *encoder, unsigned long request)
+{
+#if defined(PLATFORM_T23)
+    return openimp_t23_vpu_channel(encoder->fd, encoder->vpu_abi,
+                                    (unsigned int)(request & 0xffu),
+                                    &encoder->channel);
+#else
+    return ioctl(encoder->fd, request, &encoder->channel);
+#endif
+}
+
 
 static void t30_dma_release(IMPDMABufferInfo *dma)
 {
@@ -1770,10 +1790,17 @@ static int helix_eprc_statistics(T30HelixEncoder *encoder,
         /* struct reg_info { paddr, value, dir (0 read) } at the start of
          * a node-sized buffer (the ioctl size) */
         uint32_t node[HELIX_NODE_WORDS];
+        int result;
 
         memset(node, 0, sizeof(node));
         node[0] = HELIX_REG_BASE + EPRC_StatRegs[i];
-        if (ioctl(encoder->fd, HELIX_CHANNEL_REG, node) != 0) {
+#if defined(PLATFORM_T23)
+        result = openimp_t23_vpu_read_reg(encoder->fd, encoder->vpu_abi,
+                                          node[0], &node[1]);
+#else
+        result = ioctl(encoder->fd, HELIX_CHANNEL_REG, node);
+#endif
+        if (result != 0) {
             if (encoder->eprc_stat_errors++ == 0)
                 IMP_LOG_WARN("Encoder", HELIX_EPRC_TAG " Helix eprc: "
                              "reading 0x%08x failed (%s); statistics are 0",
@@ -2307,6 +2334,12 @@ int OpenIMP_T30_HelixCreate(T30HelixEncoder **encoder_out,
     if (!encoder)
         return -1;
     encoder->fd = -1;
+#if defined(PLATFORM_T23)
+    if (openimp_t23_vpu_select(&encoder->vpu_abi) != 0) {
+        IMP_LOG_ERR("Encoder", "invalid OPENIMP_T23_DRIVER_ABI (sdk88 or oem80)");
+        goto fail;
+    }
+#endif
 #if defined(HELIX_T21_SYNTAX)
     encoder->eprc_qp = -1;
     {
@@ -2376,7 +2409,7 @@ int OpenIMP_T30_HelixCreate(T30HelixEncoder **encoder_out,
     encoder->bsf_stop = t23_bsf_stop();
 #endif
     encoder->channel.thread_id = -1;
-    if (ioctl(encoder->fd, T30_CHANNEL_REQUEST, &encoder->channel) != 0)
+    if (t30_channel_ioctl(encoder, T30_CHANNEL_REQUEST) != 0)
         goto fail;
 #if defined(HELIX_T21_SYNTAX)
     /* Size the per-channel buffers for the picture, as the stock encoder
@@ -3064,7 +3097,7 @@ again:
             encoder->channel.time = 0;
             (void)clock_gettime(CLOCK_MONOTONIC, &t0);
             errno = 0;
-            run_ret = ioctl(encoder->fd, T30_CHANNEL_RUN, &encoder->channel);
+            run_ret = t30_channel_ioctl(encoder, T30_CHANNEL_RUN);
             run_errno = errno;
             (void)clock_gettime(CLOCK_MONOTONIC, &t1);
             run_ms = (uint32_t)((t1.tv_sec - t0.tv_sec) * 1000 +
@@ -3182,7 +3215,7 @@ again:
     /* Never let a RUN that returns without reporting a length republish the
      * previous picture's size over stale bitstream bytes. */
     encoder->channel.output_len = 0;
-    if (ioctl(encoder->fd, T30_CHANNEL_RUN, &encoder->channel) != 0 ||
+    if (t30_channel_ioctl(encoder, T30_CHANNEL_RUN) != 0 ||
         !encoder->channel.output_len ||
         encoder->channel.output_len > encoder->temporary.size - T30_SLICE_OFFSET) {
         LOG_CODEC("T30 Helix: run failed frame=%u errno=%d status=0x%08x len=%u",
@@ -3762,7 +3795,7 @@ void OpenIMP_T30_HelixDestroy(T30HelixEncoder *encoder)
         /* never a VPU in vlist with CLOSE: that powers the VPU down */
         encoder->channel.vlist = 0;
         encoder->channel.workphase = T30_CHANNEL_CLOSE;
-        (void)ioctl(encoder->fd, T30_CHANNEL_RELEASE, &encoder->channel);
+        (void)t30_channel_ioctl(encoder, T30_CHANNEL_RELEASE);
     }
     /* the shared descriptor stays open, see t30_vpu_fd */
     for (i = 0; i < 2u; i++)

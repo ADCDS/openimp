@@ -306,9 +306,18 @@ typedef struct {
     int32_t thread_id;
     uint32_t cmpx, n_flag, ncu_addr;
     uint32_t frame_type, overflow_cnt, ivdc_mem_line, data_threshold;
+#if !defined(TEST_VPU_ABI_OEM80)
     uint32_t max_bs_act, reserved;
+#endif
     uint64_t time;
 } FakeNode;
+
+#if defined(TEST_VPU_ABI_OEM80)
+#define FAKE_CHANNEL_BASE 0xc0506300u
+#else
+#define FAKE_CHANNEL_BASE 0xc0586300u
+#endif
+
 
 enum { FAULT_NONE, FAULT_BSFULL, FAULT_TIMEOUT, FAULT_LATE, FAULT_ODD,
        FAULT_OVERSIZE, FAULT_SPILL };
@@ -481,18 +490,18 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
     va_end(args);
     assert(fd == FAKE_FD);
     switch (request) {
-    case 0xc0586300u:                       /* REQUEST */
+    case (FAKE_CHANNEL_BASE | 0u):                       /* REQUEST */
         assert(node->mdelay >= 100u && node->mdelay <= 20000u);
         node->clist = 0x8000u + channels_open;
         node->channel_id = channels_open++;
         return 0;
-    case 0xc0586301u:                       /* RELEASE */
+    case (FAKE_CHANNEL_BASE | 1u):                       /* RELEASE */
         assert(node->workphase == 2u);
         channels_open--;
         return 0;
-    case 0xc0586302u:                       /* RUN */
+    case (FAKE_CHANNEL_BASE | 2u):                       /* RUN */
         break;
-    case 0xc0586307u:                       /* WOR_VPU_REG: read */
+    case (FAKE_CHANNEL_BASE | 7u):                       /* WOR_VPU_REG: read */
         /* struct reg_info { paddr, value, dir } at the node start */
         assert(node->clist >= 0x13100000u && node->clist < 0x13200000u);
         assert((node->clist & 3u) == 0u && node->mdelay == 0u);

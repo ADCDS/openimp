@@ -7,6 +7,11 @@
 
 <h1 align="center">OpenIMP</h1>
 
+This fork adds an opt-in [JOOAN JA-A12 OEM80 driver profile](docs/JOOAN_JA_A12_OEM80.md).
+Default upstream behavior is preserved. Library loading and channel
+request/release pass on-camera; fresh capture and hardware encoding remain
+unqualified for this board.
+
 <p align="center">
 
 [![license](https://img.shields.io/badge/license-per%20file-blue)](NOTICE)

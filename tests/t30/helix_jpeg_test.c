@@ -35,9 +35,15 @@
 
 #define FAKE_FD 78
 #if defined(PLATFORM_T23)
+#if defined(TEST_VPU_ABI_OEM80)
+#define CHANNEL_REQUEST 0xc0506300u
+#define CHANNEL_RELEASE 0xc0506301u
+#define CHANNEL_RUN     0xc0506302u
+#else
 #define CHANNEL_REQUEST 0xc0586300u
 #define CHANNEL_RELEASE 0xc0586301u
 #define CHANNEL_RUN     0xc0586302u
+#endif
 #define SRAM            0x131f0000u
 #else
 #define CHANNEL_REQUEST 0xc0386300u
@@ -54,7 +60,9 @@ typedef struct {
     uint32_t cmpx, n_flag, ncu_addr;
 #if defined(PLATFORM_T23)
     uint32_t frame_type, overflow_cnt, ivdc_mem_line, data_threshold;
+#if !defined(TEST_VPU_ABI_OEM80)
     uint32_t max_bs_act, reserved;
+#endif
     uint64_t time;
 #endif
 } FakeChannel;
@@ -492,7 +500,14 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
         if (force_overflow)
             channel->status |= (1u << 20);
 #if defined(PLATFORM_T23)
+#if defined(TEST_VPU_ABI_OEM80)
+        /* This driver cannot return JPGC_ACT_BS; exercise the production
+         * conservative near-capacity check instead of aliasing time. */
+        if (force_act_once)
+            channel->output_len = allocation_size(regs[0xe000c >> 2]) - 1u;
+#else
         channel->max_bs_act = force_act_once ? (1u << 29) : 0u;
+#endif
         force_act_once = 0;
 #endif
         return 0;

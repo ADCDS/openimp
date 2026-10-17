@@ -7675,6 +7675,10 @@ static int t23_native_wanted(void)
 static int t23_native_fallback_allowed(void)
 {
     const char *value = getenv("OPENIMP_T23_NATIVE_FALLBACK");
+    const char *driver = getenv("OPENIMP_T23_DRIVER_ABI");
+
+    if (driver && *driver && strcmp(driver, "sdk88") != 0)
+        return 0;
 
     return !(value && value[0] == '0' && value[1] == '\0');
 }

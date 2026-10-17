@@ -13,6 +13,9 @@
  */
 
 #include "t30/helix_jpeg.h"
+#if defined(PLATFORM_T23)
+#include "t23_vpu_abi.h"
+#endif
 
 #include <errno.h>
 #include <fcntl.h>
@@ -567,6 +570,9 @@ uint32_t HelixJpeg_McuWorstBytes(void)
  * (only with the software encoder to fall back to). */
 #define HELIX_JPEG_MAX_FAILURES 3u
 
+#if defined(PLATFORM_T23)
+typedef OpenIMPT23VpuNode HelixJpegChannel;
+#else
 typedef struct {
     uint32_t clist;
     uint32_t vlist;
@@ -592,6 +598,7 @@ typedef struct {
     uint64_t time;
 #endif
 } HelixJpegChannel;
+#endif
 
 #if defined(PLATFORM_T23)
 _Static_assert(sizeof(HelixJpegChannel) == 88, "T23 soc_vpu channel ABI");
@@ -621,6 +628,9 @@ static struct {
     int state;                 /* 0 idle, 1 ready, -1 off */
     int fd;
     HelixJpegChannel channel;
+#if defined(PLATFORM_T23)
+    OpenIMPT23VpuAbi vpu_abi;
+#endif
     IMPDMABufferInfo job;      /* command list + bitstream, per job */
     IMPDMABufferInfo source;   /* copy of a frame outside rmem, per job */
     uint32_t failures;
@@ -643,6 +653,18 @@ static struct {
     uint32_t channels;         /* JPEG channels (Reserve .. Release) */
     int borrowed;              /* job is the T23 shared H.264 area */
 } helix_jpeg = { .lock = PTHREAD_MUTEX_INITIALIZER, .fd = -1 };
+
+static int helix_channel_ioctl(unsigned long request)
+{
+#if defined(PLATFORM_T23)
+    return openimp_t23_vpu_channel(helix_jpeg.fd, helix_jpeg.vpu_abi,
+                                    (unsigned int)(request & 0xffu),
+                                    &helix_jpeg.channel);
+#else
+    return ioctl(helix_jpeg.fd, request, &helix_jpeg.channel);
+#endif
+}
+
 
 static void helix_dma_release(IMPDMABufferInfo *dma)
 {
@@ -725,6 +747,13 @@ static int helix_jpeg_open_locked(void)
 {
     uint32_t mdelay;
 
+#if defined(PLATFORM_T23)
+    if (openimp_t23_vpu_select(&helix_jpeg.vpu_abi) != 0) {
+        IMP_LOG_ERR("Encoder", "invalid OPENIMP_T23_DRIVER_ABI (sdk88 or oem80)");
+        return -1;
+    }
+#endif
+
 #if OPENIMP_SW_JPEG
     if (getenv("OPENIMP_HELIX_HW_JPEG") &&
         !strcmp(getenv("OPENIMP_HELIX_HW_JPEG"), "0")) {
@@ -782,7 +811,7 @@ static int helix_jpeg_open_locked(void)
     helix_jpeg.channel.mdelay = mdelay;
     helix_jpeg.channel.codecdir = HELIX_CODEC_JPEG_ENC;
     helix_jpeg.channel.thread_id = -1;
-    if (ioctl(helix_jpeg.fd, HELIX_CHANNEL_REQUEST, &helix_jpeg.channel) != 0) {
+    if (helix_channel_ioctl(HELIX_CHANNEL_REQUEST) != 0) {
         IMP_LOG_ERR("Encoder", "Helix JPEG: channel request failed: %s",
                     strerror(errno));
         memset(&helix_jpeg.channel, 0, sizeof(helix_jpeg.channel));
@@ -847,8 +876,7 @@ void OpenIMP_HelixJpeg_Shutdown(void)
          * VPU down; this channel holds none between jobs */
         helix_jpeg.channel.vlist = 0;
         helix_jpeg.channel.workphase = HELIX_WORKPHASE_CLOSE;
-        (void)ioctl(helix_jpeg.fd, HELIX_CHANNEL_RELEASE,
-                    &helix_jpeg.channel);
+        (void)helix_channel_ioctl(HELIX_CHANNEL_RELEASE);
     }
     memset(&helix_jpeg.channel, 0, sizeof(helix_jpeg.channel));
     helix_dma_release(&helix_jpeg.job);
@@ -1125,7 +1153,7 @@ static int helix_jpeg_job_locked(HelixJpegSlice *slice, uint32_t capacity,
 #endif
     helix_jpeg.active = buffer;
     errno = 0;
-    ret = ioctl(helix_jpeg.fd, HELIX_CHANNEL_RUN, &helix_jpeg.channel);
+    ret = helix_channel_ioctl(HELIX_CHANNEL_RUN);
     if (helix_jpeg.probe_limit)
         helix_probe_report();
     if (ret != 0)

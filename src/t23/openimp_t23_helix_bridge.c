@@ -24,6 +24,44 @@
 #include "openimp_t23_persist.h"
 #include "dma_alloc.h"
 
+/* uClibc 0.9.33.2 has no mkostemp. Keep O_EXCL and O_CLOEXEC atomic
+ * instead of opening a temporary fd and setting CLOEXEC after creation. */
+static int t23_shared_tempfile(char *path)
+{
+#if defined(__UCLIBC__) && __UCLIBC_MAJOR__ == 0
+    static const char alphabet[] =
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    size_t length = strlen(path);
+    int random_fd, fd = -1, saved_errno = EEXIST;
+    if (length < 6 || strcmp(path + length - 6, "XXXXXX")) {
+        errno = EINVAL; return -1;
+    }
+    random_fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (random_fd < 0) { path[0] = 0; return -1; }
+    for (unsigned int attempt = 0; attempt < 128; ++attempt) {
+        unsigned char bytes[6]; size_t used = 0;
+        while (used < sizeof(bytes)) {
+            ssize_t n = read(random_fd, bytes + used, sizeof(bytes) - used);
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) { saved_errno = n ? errno : EIO; goto done; }
+            used += (size_t)n;
+        }
+        for (size_t i = 0; i < sizeof(bytes); ++i)
+            path[length - 6 + i] = alphabet[bytes[i] % (sizeof(alphabet) - 1)];
+        fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        if (fd >= 0) break;
+        saved_errno = errno;
+        if (errno != EEXIST) break;
+    }
+done:
+    close(random_fd);
+    if (fd < 0) { path[0] = 0; errno = saved_errno; }
+    return fd;
+#else
+    return mkostemp(path, O_CLOEXEC);
+#endif
+}
+
 #define T23_HELIX_HELPER_DEFAULT "/opt/openimp-t23/openimp-t23-helixd"
 const char *OpenIMP_T23_HelixHelperPath(void)
 {
@@ -34,6 +72,10 @@ const char *OpenIMP_T23_HelixHelperPath(void)
 
 int OpenIMP_T23_HelixHelperAvailable(void)
 {
+    const char *driver = getenv("OPENIMP_T23_DRIVER_ABI");
+    if (driver && *driver && strcmp(driver, "sdk88") != 0)
+        return 0; /* OEM80 and unknown profiles must use native code. */
+
     return access(OpenIMP_T23_HelixHelperPath(), X_OK) == 0;
 }
 
@@ -518,8 +560,8 @@ static int t23_start_worker_with(T23HelixBridge *bridge,
         return -1;
     }
     helper = OpenIMP_T23_HelixHelperPath();
-    if (access(helper, X_OK) != 0) {
-        t23_log(LOG_ERR, "openimp/T23: Helix helper unavailable: %s",
+    if (!OpenIMP_T23_HelixHelperAvailable()) {
+        t23_log(LOG_ERR, "openimp/T23: Helix helper unavailable for driver profile: %s",
                 helper);
         return -1;
     }
@@ -531,7 +573,7 @@ static int t23_start_worker_with(T23HelixBridge *bridge,
     /* Close-on-exec in the streamer, so a helper it forks (irprobe etc.)
      * does not inherit them; the Helix helper gets its two fds cleared of
      * FD_CLOEXEC in the child below, between fork and execve. */
-    bridge->shared_fd = mkostemp(shared_path, O_CLOEXEC);
+    bridge->shared_fd = t23_shared_tempfile(shared_path);
     if (bridge->shared_fd < 0 ||
         ftruncate(bridge->shared_fd, bridge->shared_size) != 0 ||
         socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) != 0)

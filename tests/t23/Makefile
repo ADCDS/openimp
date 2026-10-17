@@ -1,4 +1,5 @@
 CC ?= cc
+.DEFAULT_GOAL := check
 CFLAGS ?= -std=gnu99 -O2 -Wall -Wextra -Werror -Wno-unused-function \
 	-Wno-cast-function-type
 PROJECT_DIR := ../..
@@ -18,11 +19,16 @@ IVS_MOVE_V2 := $(BUILD)/t23-ivs-move-v2-test
 JPEG_QL := $(BUILD)/t23-jpeg-ql-test
 HELIX_DESCRIPTOR := $(BUILD)/t23-helix-descriptor-test
 HELIX_STREAM := $(BUILD)/t23-helix-stream-test
+HELIX_STREAM_OEM80 := $(BUILD)/t23-helix-stream-test-oem80
+RMEM_OEM80 := $(BUILD)/t23-rmem-layout-test-oem80
 RMEM_LAYOUT := $(BUILD)/t23-rmem-layout-test
 OSD_PACK := $(BUILD)/t23-osd-pack-test
 AUDIO_ABI := $(BUILD)/t23-audio-abi-test
 HEVC_POLICY := $(BUILD)/t23-hevc-policy-test
+VPU_ABI := $(BUILD)/t23-vpu-abi-test
+ISP_OEM80 := $(BUILD)/t23-isp-oem80-test
 HELIX_NATIVE_SOURCES := $(PROJECT_DIR)/src/t30/t30_helix_encoder.c \
+	$(PROJECT_DIR)/src/t30/t23_vpu_abi.c \
 	$(PROJECT_DIR)/src/t21/t21_h264_descriptor.c \
 	$(PROJECT_DIR)/src/t30/h264enc/cabac.c \
 	$(PROJECT_DIR)/src/t30/h264enc/common.c \
@@ -37,14 +43,32 @@ HELIX_NATIVE_SOURCES := $(PROJECT_DIR)/src/t30/t30_helix_encoder.c \
 HELIX_INCLUDES := -DPLATFORM_T23 '-D_Static_assert(c,m)=' -Wno-unused-result \
 	-I$(PROJECT_DIR)/include -I$(PROJECT_DIR)/src
 
-.PHONY: check clean hevc-policy device t23tune
+.PHONY: check clean hevc-policy device t23tune vpu-abi oem80
+
+$(VPU_ABI): vpu_abi_test.c $(PROJECT_DIR)/src/t30/t23_vpu_abi.c \
+	$(PROJECT_DIR)/src/t30/t23_vpu_abi.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(PROJECT_DIR)/src vpu_abi_test.c \
+		$(PROJECT_DIR)/src/t30/t23_vpu_abi.c -Wl,--wrap=ioctl -o $@
+
+vpu-abi: $(VPU_ABI)
+	$(VPU_ABI)
+
+$(ISP_OEM80): isp_oem80_test.c $(PROJECT_DIR)/src/t23/t23_isp_oem80.c \
+	$(PROJECT_DIR)/src/t23/t23_isp_oem80.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(PROJECT_DIR)/src isp_oem80_test.c \
+		$(PROJECT_DIR)/src/t23/t23_isp_oem80.c -Wl,--wrap=ioctl -o $@
 
 # The code under test passes pointers through 32-bit words, as on MIPS:
 # build without PIE so the test's data lies below 4 GiB.
 check: $(ISP_TUNING_TEST_BIN) $(ACODEC_TEST_BIN) $(ZERO_COPY_TEST_BIN) \
 	$(FAKE_HELIXD_BIN) $(IVS_DIGEST_T31) $(IVS_DIGEST_T23) \
 	$(IVS_FRAMEWORK) $(IVS_MOVE_V2) $(JPEG_QL) $(HELIX_DESCRIPTOR) $(HELIX_STREAM) \
-	$(RMEM_LAYOUT) $(OSD_PACK) $(AUDIO_ABI)
+	$(RMEM_LAYOUT) $(OSD_PACK) $(AUDIO_ABI) $(VPU_ABI) $(ISP_OEM80)
+	$(VPU_ABI)
+	$(ISP_OEM80)
+	$(MAKE) oem80
 	$(HELIX_DESCRIPTOR)
 	$(RMEM_LAYOUT)
 	$(OSD_PACK)
@@ -71,6 +95,7 @@ check: $(ISP_TUNING_TEST_BIN) $(ACODEC_TEST_BIN) $(ZERO_COPY_TEST_BIN) \
 	$(ACODEC_TEST_BIN)
 	$(ZERO_COPY_TEST_BIN) zero-copy "$(abspath $(FAKE_HELIXD_BIN))"
 	$(ZERO_COPY_TEST_BIN) copy "$(abspath $(FAKE_HELIXD_BIN))"
+	$(ZERO_COPY_TEST_BIN) reject-worker "$(abspath $(FAKE_HELIXD_BIN))"
 	$(IVS_DIGEST_T31) > $(BUILD)/t23-ivs-digest-t31abi.txt
 	$(IVS_DIGEST_T23) > $(BUILD)/t23-ivs-digest-t23abi.txt
 	cat $(BUILD)/t23-ivs-digest-t23abi.txt
@@ -166,6 +191,34 @@ $(HELIX_STREAM): helix_stream_test.c $(HELIX_NATIVE_SOURCES) \
 		helix_stream_test.c $(HELIX_NATIVE_SOURCES) -no-pie \
 		-Wl,--wrap=open,--wrap=close,--wrap=ioctl -lm -o "$@"
 
+$(HELIX_STREAM_OEM80): helix_stream_test.c $(HELIX_NATIVE_SOURCES) \
+	$(PROJECT_DIR)/src/t30/t23_vpu_abi.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(HELIX_INCLUDES) -DTEST_VPU_ABI_OEM80 \
+		-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -Wno-missing-field-initializers \
+		helix_stream_test.c $(HELIX_NATIVE_SOURCES) -no-pie \
+		-Wl,--wrap=open,--wrap=close,--wrap=ioctl -lm -o "$@"
+
+$(RMEM_OEM80): rmem_layout_test.c $(HELIX_NATIVE_SOURCES) \
+	$(PROJECT_DIR)/src/t30/t23_vpu_abi.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(HELIX_INCLUDES) -DTEST_VPU_ABI_OEM80 \
+		-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -Wno-missing-field-initializers \
+		rmem_layout_test.c $(HELIX_NATIVE_SOURCES) -no-pie \
+		-Wl,--wrap=open,--wrap=close,--wrap=ioctl -lm -o "$@"
+
+oem80: $(HELIX_STREAM_OEM80) $(RMEM_OEM80)
+	OPENIMP_T23_DRIVER_ABI=oem80 $(HELIX_STREAM_OEM80) encode $(BUILD)/t23-oem80.h264 $(BUILD)/t23-oem80.ref
+	OPENIMP_T23_DRIVER_ABI=oem80 $(HELIX_STREAM_OEM80) rc
+	OPENIMP_T23_DRIVER_ABI=oem80 $(HELIX_STREAM_OEM80) crop $(BUILD)/t23-oem80-crop.h264
+	OPENIMP_T23_DRIVER_ABI=oem80 $(RMEM_OEM80)
+	@if command -v ffmpeg >/dev/null 2>&1; then \
+		ffmpeg -v error -err_detect explode -threads 1 -y \
+			-i $(BUILD)/t23-oem80.h264 -fps_mode passthrough -f rawvideo \
+			-pix_fmt nv12 $(BUILD)/t23-oem80.nv12 && \
+		$(HELIX_STREAM_OEM80) verify $(BUILD)/t23-oem80.nv12 $(BUILD)/t23-oem80.ref; \
+	else echo "ffmpeg not found: OEM80 fake-VPU stream not decoded"; fi
+
 # Reserved-memory layout with the native encoder: OpenIMP's arena and the
 # real encoder buffer sizes through timps' idle/re-enable cycles.
 $(OSD_PACK): osd_pack_test.c $(PROJECT_DIR)/src/t23/openimp_t23_osd_pack.h \
@@ -200,6 +253,9 @@ hevc-policy: hevc_policy_test.c $(PROJECT_DIR)/src/t40/p2_hevc_policy.h
 clean:
 	rm -f $(HELIX_DESCRIPTOR) $(HELIX_STREAM) $(RMEM_LAYOUT) $(OSD_PACK) $(AUDIO_ABI) $(BUILD)/t23-helix.h264 \
 		$(BUILD)/t23-helix.ref $(BUILD)/t23-helix.nv12
+	rm -f $(VPU_ABI) $(ISP_OEM80) $(HELIX_STREAM_OEM80) $(RMEM_OEM80) \
+		$(BUILD)/t23-oem80.h264 $(BUILD)/t23-oem80.ref \
+		$(BUILD)/t23-oem80.nv12 $(BUILD)/t23-oem80-crop.h264
 	rm -f $(ISP_TUNING_TEST_BIN) $(ACODEC_TEST_BIN) $(DEVICE_TEST_BIN) \
 		$(ZERO_COPY_TEST_BIN) $(FAKE_HELIXD_BIN) $(IVS_DIGEST_T31) \
 		$(IVS_DIGEST_T23) $(IVS_FRAMEWORK) $(JPEG_QL) \

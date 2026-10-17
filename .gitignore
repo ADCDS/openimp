@@ -32,4 +32,6 @@ __pycache__/
 /binary_ninja_mcp/
 /prudynt-t-*/
 /driver/
+/tests/t30/helix_jpeg_test_t23_oem80
+/core
 tools/roitest/roitest_t*

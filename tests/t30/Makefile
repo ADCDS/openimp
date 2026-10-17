@@ -68,12 +68,12 @@ rmem_highwater_test: rmem_highwater_test.c $(ROOT)/src/dma_alloc.c \
 		-o $@ rmem_highwater_test.c -pthread
 
 # T23 with the reference ring: ring, EMC and the shared bitstream area.
-t23_ring_layout_test: $(T21_RMEM_SOURCES) $(ROOT)/src/rmem_arena.h \
+t23_ring_layout_test: $(T21_RMEM_SOURCES) $(ROOT)/src/t30/t23_vpu_abi.c $(ROOT)/src/rmem_arena.h \
 	$(ROOT)/src/t21/t21_ref_ring.h $(ROOT)/src/t30/t30_helix_encoder.h
 	$(CC) $(CFLAGS) -DPLATFORM_T23 -fno-pie -no-pie \
 		-I$(ROOT)/include -I$(ROOT)/src $(INCLUDES) \
 		-Wl,--wrap=open,--wrap=close,--wrap=ioctl \
-		-o $@ $(T21_RMEM_SOURCES) -pthread -lm
+		-o $@ $(T21_RMEM_SOURCES) $(ROOT)/src/t30/t23_vpu_abi.c -pthread -lm
 
 t21_sinter_map_test: t21_sinter_map_test.c $(ROOT)/src/isp/isp_t21_sinter.h
 	$(CC) $(CFLAGS) -I$(ROOT)/src -o $@ t21_sinter_map_test.c
@@ -109,9 +109,18 @@ helix_jpeg_test_t20: $(HJPEG_DEPS)
 	$(CC) $(HJPEG_FLAGS) -DPLATFORM_T20 -DPLATFORM_T21 -DOPENIMP_SW_JPEG=0 \
 		-o $@ helix_jpeg_test.c $(ROOT)/src/t30/helix_jpeg.c -lm -pthread
 
-helix_jpeg_test_t23: $(HJPEG_DEPS)
+helix_jpeg_test_t23: $(HJPEG_DEPS) $(ROOT)/src/t30/t23_vpu_abi.c
 	$(CC) $(HJPEG_FLAGS) -DPLATFORM_T23 -DOPENIMP_SW_JPEG=0 -o $@ \
-		helix_jpeg_test.c $(ROOT)/src/t30/helix_jpeg.c -lm -pthread
+		helix_jpeg_test.c $(ROOT)/src/t30/helix_jpeg.c $(ROOT)/src/t30/t23_vpu_abi.c -lm -pthread
+
+helix_jpeg_test_t23_oem80: $(HJPEG_DEPS) $(ROOT)/src/t30/t23_vpu_abi.c
+	$(CC) $(HJPEG_FLAGS) -DPLATFORM_T23 -DOPENIMP_SW_JPEG=0 \
+		-DTEST_VPU_ABI_OEM80 -o $@ helix_jpeg_test.c \
+		$(ROOT)/src/t30/helix_jpeg.c $(ROOT)/src/t30/t23_vpu_abi.c -lm -pthread
+
+.PHONY: oem80
+oem80: helix_jpeg_test_t23_oem80
+	OPENIMP_T23_DRIVER_ABI=oem80 ./helix_jpeg_test_t23_oem80
 
 # IVS framework and move algorithm with the legacy T20/T21/T30 ABI; the test
 # source is shared with tests/t23. The frame record carries 32-bit
@@ -365,7 +374,7 @@ clean:
 	$(RM) descriptor_test annexb_test level_test helix_encoder_test \
 		rc_readback_test_t21 rc_readback_test_t20 rc_readback_test_t23 \
 		helix_encoder_test_t21 helix_encoder_test_t20 t21_rmem_layout_test t23_ring_layout_test \
-		t21_sinter_map_test t21_front_crop_test helix_jpeg_test_t21 helix_jpeg_test_t20 helix_jpeg_test_t23 \
+		t21_sinter_map_test t21_front_crop_test helix_jpeg_test_t21 helix_jpeg_test_t20 helix_jpeg_test_t23 helix_jpeg_test_t23_oem80 \
 		ivs_framework_test_t21 ivs_framework_test_t20 ivs_move_bench_t20 \
 		fs_lifecycle_test_t21 fs_lifecycle_test_t20 fs_lifecycle_test_t23 \
 		fs_lifecycle_asan_* fs_lifecycle_tsan_* helix_encoder_asan_* \

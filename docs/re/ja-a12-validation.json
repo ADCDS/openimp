@@ -1,0 +1,61 @@
+{
+  "verified_at_utc": "2026-10-17T17:34:34.357276+00:00",
+  "upstream_base_commit": "5a83603e62f8dcd8aadc9b181126dfa1666b9a7d",
+  "branch": "jooan/oem-t23-abi",
+  "driver_evidence": {
+    "kernel": "ja-a12-vpu-ledger.json",
+    "isp": "ja-a12-isp-ledger.json",
+    "instruction_anchor_checker": "passed; exact kernel/module SHA256s, 11 dispatch entries and selected copy-size instructions"
+  },
+  "build": {
+    "artifact": "build/t23/libimp.so",
+    "bytes": 769256,
+    "sha256": "e6e063a2eef41e237bc38701e574a0724c330bad6cd75ce703e701f61e887896",
+    "compiler": "Ingenic GCC 5.4.0 multilib, -muclibc; MIPS32r2 o32",
+    "needed": [
+      "libdl.so.0",
+      "libpthread.so.0",
+      "librt.so.0",
+      "libm.so.0",
+      "libc.so.0"
+    ],
+    "proprietary_sdk_linked": false
+  },
+  "host_validation": {
+    "t23_suite": "passed, includes sdk88 and oem80 fake-driver H264 generation/FFmpeg decode, rate-control, crop and rmem tests",
+    "t30_suite": "passed on rerun; optional T30 dynamic export check skipped because T30 library not built",
+    "jpeg_oem80": "passed, including independent image decode and conservative limit fallback",
+    "vpu_abi_checks": 670,
+    "isp_abi_lifecycle_checks": 785,
+    "sanitizers": "AddressSanitizer and UndefinedBehaviorSanitizer pass on both new boundary helpers",
+    "worker_policy": "SDK88 default fake-worker copy/zero-copy pass; OEM80/unknown cannot launch an executable worker through direct YUV API",
+    "upstream_timing_observation": "First T30 suite run failed an unchanged T20 IVS PollingResult timing check. Focused rerun and complete suite rerun passed; no IVS source was changed."
+  },
+  "mips_qemu": {
+    "library_load": "passed against private compatible OEM rootfs",
+    "vpu_abi_checks": 670,
+    "isp_abi_checks": 785,
+    "scope": "No peripherals emulated"
+  },
+  "camera": {
+    "scope": "library load, fake-driver ABI tests on native CPU, and own channel request/release; no VPU RUN, DMA allocation or sensor/ISP calls",
+    "library_sha256": "e6e063a2eef41e237bc38701e574a0724c330bad6cd75ce703e701f61e887896",
+    "load": "Loaded: libimp.so T23 openimp\n",
+    "vpu_fake_driver_tests": "PASS: 670 T23 VPU ABI checks\n",
+    "isp_fake_driver_tests": "PASS: 785 OEM ISP ABI/lifecycle checks\n",
+    "sdk88_expected_rejection": "abi=sdk88 request=-1 errno=1\n",
+    "oem80_channel": "abi=oem80 request=0 errno=0\nabi=oem80 release=0 errno=0\n",
+    "oem_module_file_matches_analyzed_artifact": true,
+    "existing_services_unchanged": true,
+    "passed": true,
+    "temporary_files_removed": true
+  },
+  "not_qualified": [
+    "Sensor enable/link creation and live capture",
+    "Actual VPU RUN/encoding, IRQ and DMA/cache behavior",
+    "Dual-sensor capture and tuning",
+    "Physical audio/OSD/JPEG integration",
+    "Integration with jooanipc-open vendor-version gate"
+  ],
+  "camera_changes": "Temporary RAM files only; no OEM process stopped, firmware write, module reload, persistent configuration change or reboot."
+}

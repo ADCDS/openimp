@@ -141,6 +141,19 @@ int main(int argc, char **argv)
 
     assert(argc > 2);
     setenv("OPENIMP_T23_HELIX_HELPER", argv[2], 1);
+    if (!strcmp(argv[1], "reject-worker")) {
+        const char *profiles[] = {"oem80", "unknown"};
+        for (unsigned int i = 0; i < 2; ++i) {
+            setenv("OPENIMP_T23_DRIVER_ABI", profiles[i], 1);
+            memset(&input, 0, sizeof(input));
+            memset(&bridge, 0, sizeof(bridge));
+            assert(!OpenIMP_T23_HelixHelperAvailable());
+            assert(OpenIMP_T23_HelixInitYuv(&bridge, WIDTH, HEIGHT, &input) < 0);
+            assert(bridge.worker_pid < 0 && bridge.shared_fd < 0 && bridge.failed);
+        }
+        puts("OEM80 and unknown profiles cannot launch proprietary workers");
+        return 0;
+    }
     if (copy_mode)
         setenv("OPENIMP_T23_HELIX_COPY", "1", 1);
     pool = frame_memory();
