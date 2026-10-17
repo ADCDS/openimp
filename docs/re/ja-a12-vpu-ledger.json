@@ -1,0 +1,290 @@
+{
+  "kernel_sha256": "1c2d0d2c4f07046af99e9c4f09c8b77ff62582c5f1d8fc7c6e7dc802cdac64ec",
+  "kernel_bytes": 4449540,
+  "load_base": "0x80010000",
+  "identity_source": "raw .work/vmlinux.bin; exact table and string pointer consistency",
+  "original_ghidra_mapping": "wrong: ram starts 0x80000000 and has zero functions; original left untouched",
+  "corrected_scratch_mapping": "ram 0x80010000..0x8044e503; no automatic analysis",
+  "dispatcher": {
+    "va": "0x801acafc",
+    "offset": "0x19cafc",
+    "command_subtraction_constant": "0x3faf9d00",
+    "accepted_commands": "0xc0506300..0xc050630a",
+    "default_return": -1,
+    "table_va": "0x803992e0",
+    "table_offset": "0x3892e0"
+  },
+  "cases": [
+    {
+      "nr": 0,
+      "command": "0xc0506300",
+      "name": "request channel",
+      "entry_va": "0x801acb64",
+      "entry_offset": "0x19cb64",
+      "copy_from_user_bytes": 80,
+      "copy_to_user_bytes": 80,
+      "copy_policy": "success only; copy faults may partly modify user bytes",
+      "copy_in_size_instruction": "0x801acba4",
+      "copy_out_size_instruction": "0x801ace24"
+    },
+    {
+      "nr": 1,
+      "command": "0xc0506301",
+      "name": "release channel",
+      "entry_va": "0x801acedc",
+      "entry_offset": "0x19cedc",
+      "copy_from_user_bytes": 80,
+      "copy_to_user_bytes": 80,
+      "copy_policy": "success only; clist and vlist cleared; copy faults may partly modify user bytes",
+      "copy_in_size_instruction": "0x801acf24",
+      "copy_out_size_instruction": "0x801acf94"
+    },
+    {
+      "nr": 2,
+      "command": "0xc0506302",
+      "name": "run",
+      "entry_va": "0x801acfa8",
+      "entry_offset": "0x19cfa8",
+      "copy_from_user_bytes": 80,
+      "copy_to_user_bytes": 80,
+      "copy_policy": "normal success only; callback early return 2 and operational failures skip copyback",
+      "copy_in_size_instruction": "0x801acfe8",
+      "copy_out_size_instruction": "0x801adb6c"
+    },
+    {
+      "nr": 3,
+      "command": "0xc0506303",
+      "name": "split start",
+      "entry_va": "0x801ad1c4",
+      "entry_offset": "0x19d1c4",
+      "copy_from_user_bytes": 80,
+      "copy_to_user_bytes": 80,
+      "copy_policy": "nonnegative callback result becomes ioctl return 0 with copyback; failures skip copyback",
+      "copy_in_size_instruction": "0x801ad204",
+      "copy_out_size_instruction": "0x801adbb0"
+    },
+    {
+      "nr": 4,
+      "command": "0xc0506304",
+      "name": "split wait",
+      "entry_va": "0x801ad38c",
+      "entry_offset": "0x19d38c",
+      "copy_from_user_bytes": 80,
+      "copy_to_user_bytes": 80,
+      "copy_policy": "normal success only; wait failure skips copyback",
+      "copy_in_size_instruction": "0x801ad3cc",
+      "copy_out_size_instruction": "0x801ad4e8"
+    },
+    {
+      "nr": 5,
+      "command": "0xc0506305",
+      "name": "cache operation",
+      "entry_va": "0x801ad540",
+      "entry_offset": "0x19d540",
+      "copy_from_user_bytes": 12,
+      "copy_to_user_bytes": 0,
+      "copy_policy": "no copyback; copy/access faults return -14",
+      "copy_in_size_instruction": "0x801ad578",
+      "copy_out_size_instruction": null
+    },
+    {
+      "nr": 6,
+      "command": "0xc0506306",
+      "name": "normal DMMU map",
+      "entry_va": "0x801ad5a4",
+      "entry_offset": "0x19d5a4",
+      "copy_from_user_bytes": 36,
+      "copy_to_user_bytes": 0,
+      "copy_policy": "no copyback; false payload.tlb_needed is successful no-op",
+      "copy_in_size_instruction": "0x801ad5e4",
+      "copy_out_size_instruction": null
+    },
+    {
+      "nr": 7,
+      "command": "0xc0506307",
+      "name": "register read/write",
+      "entry_va": "0x801ad730",
+      "entry_offset": "0x19d730",
+      "copy_from_user_bytes": 12,
+      "copy_to_user_bytes": 12,
+      "copy_policy": "selector 0 read copies 12 back; selector 1 write has no copyback; other selectors fail",
+      "copy_in_size_instruction": "0x801ad770",
+      "copy_out_size_instruction": "0x801ad800"
+    },
+    {
+      "nr": 8,
+      "command": "0xc0506308",
+      "name": "suspend",
+      "entry_va": "0x801ad828",
+      "entry_offset": "0x19d828",
+      "copy_from_user_bytes": 4,
+      "copy_to_user_bytes": 0,
+      "copy_policy": "no copyback; payload is vlist cookie only",
+      "copy_in_size_instruction": "0x801ad86c",
+      "copy_out_size_instruction": null
+    },
+    {
+      "nr": 9,
+      "command": "0xc0506309",
+      "name": "resume",
+      "entry_va": "0x801ad8e4",
+      "entry_offset": "0x19d8e4",
+      "copy_from_user_bytes": 4,
+      "copy_to_user_bytes": 0,
+      "copy_policy": "no copyback; payload is vlist cookie only",
+      "copy_in_size_instruction": "0x801ad928",
+      "copy_out_size_instruction": null
+    },
+    {
+      "nr": 10,
+      "command": "0xc050630a",
+      "name": "private TLB base",
+      "entry_va": "0x801ad9c0",
+      "entry_offset": "0x19d9c0",
+      "copy_from_user_bytes": 36,
+      "copy_to_user_bytes": 0,
+      "copy_policy": "no copyback; payload.tlb_needed selects set/clear; base from payload+0x08",
+      "copy_in_size_instruction": "0x801ada14",
+      "copy_out_size_instruction": null
+    }
+  ],
+  "node_fields": [
+    {
+      "offset": "0x0",
+      "name": "clist",
+      "bytes": 4,
+      "evidence": "returned channel cookie"
+    },
+    {
+      "offset": "0x4",
+      "name": "vlist",
+      "bytes": 4,
+      "evidence": "returned VPU cookie"
+    },
+    {
+      "offset": "0x8",
+      "name": "mdelay",
+      "bytes": 4,
+      "evidence": "timeout conversion in request/wait"
+    },
+    {
+      "offset": "0xc",
+      "name": "channel_id",
+      "bytes": 4,
+      "evidence": "request copies allocated clist index here"
+    },
+    {
+      "offset": "0x10",
+      "name": "vpu_id",
+      "bytes": 4,
+      "evidence": "VPU selection mask"
+    },
+    {
+      "offset": "0x14",
+      "name": "codecdir",
+      "bytes": 4,
+      "evidence": "wait checks 0,0x10000,0x10001"
+    },
+    {
+      "offset": "0x18",
+      "name": "workphase",
+      "bytes": 4,
+      "evidence": "VPU lifecycle flag"
+    },
+    {
+      "offset": "0x1c",
+      "name": "status",
+      "bytes": 4,
+      "evidence": "wait stores backend status"
+    },
+    {
+      "offset": "0x20",
+      "name": "output_len",
+      "bytes": 4,
+      "evidence": "wait stores backend output length"
+    },
+    {
+      "offset": "0x24",
+      "name": "dma_addr",
+      "bytes": 4,
+      "evidence": "cache/start read descriptor address"
+    },
+    {
+      "offset": "0x28",
+      "name": "thread_id",
+      "bytes": 4,
+      "evidence": "source-correlated name; not independently consumed in selected handler"
+    },
+    {
+      "offset": "0x2c",
+      "name": "cmpx",
+      "bytes": 4,
+      "evidence": "wait stores backend comparison result"
+    },
+    {
+      "offset": "0x30",
+      "name": "n_flag",
+      "bytes": 4,
+      "evidence": "source-correlated name; no selected consumer established"
+    },
+    {
+      "offset": "0x34",
+      "name": "ncu_addr",
+      "bytes": 4,
+      "evidence": "source-correlated name; no selected consumer established"
+    },
+    {
+      "offset": "0x38",
+      "name": "frame_type",
+      "bytes": 4,
+      "evidence": "start reads and compares3 at0x801ae458"
+    },
+    {
+      "offset": "0x3c",
+      "name": "overflow_cnt",
+      "bytes": 4,
+      "evidence": "start reads at0x801ae470"
+    },
+    {
+      "offset": "0x40",
+      "name": "ivdc_mem_line",
+      "bytes": 4,
+      "evidence": "start reads at0x801ae5bc"
+    },
+    {
+      "offset": "0x44",
+      "name": "unknown_word_44",
+      "bytes": 4,
+      "evidence": "source calls data_threshold; semantic use not established; not proven padding"
+    },
+    {
+      "offset": "0x48",
+      "name": "time",
+      "bytes": 8,
+      "evidence": "start reads low/high at0x801ae4f0/0x801ae4e4; total node length80"
+    }
+  ],
+  "copyback_on_failure": {
+    "operational_run_wait_failure": "No full-node copyback for reachable request/reset/start/wait failures. Userspace bytes retain their prior contents. A partial copy_to_user failure may leave a partly modified buffer and returns -22.",
+    "positive_run_return_2": "Start callback return 2 takes 0x801ad0b8 -> 0x801ad52c; releases VPU and returns 2 without copy_to_user.",
+    "negative_release_branches": "Dispatcher contains branches after release helper, but helper 0x801ac340 unconditionally returns 0 at 0x801ac420; those negative-release branches are unreachable in this binary.",
+    "adapter_policy": "Preserving translated bytes after any return is defensible to avoid dropping partial copies, but nonzero returns do not establish valid status/output fields."
+  },
+  "lifecycle": {
+    "channel_request": "0x801acb64 case: reserve clist, return clist at node+0 and channel identifier at +0xc, clear clist TLB mode/state.",
+    "vpu_request": "0x801abde8: selects VPU by node+0x10 and returns vlist at node+4.",
+    "reset": "0x801ac580 invokes ops+0x14; Helix reset callback pointer at file 0x400d1c = 0x801ae104.",
+    "cache": "0x801acabc reads dma_addr at +0x24; if clist byte+0x18 is zero, adds 0x80000000; calls 0x80025698(0,cache_va,0x100000,0). Fixed 1MiB cache range is independent of actual descriptor length.",
+    "start": "0x801ae404 (pointer file 0x400d14) writes MMIO+0x84=(node.dma_addr & 0xffffff80)|1 at 0x801ae644..0x801ae654. Platform resource file0x3edb00/04 is 0x13100000..0x131fffff, making task register physical0x13100084.",
+    "wait": "0x801ae210 (pointer file0x400d18) waits using node+8 mdelay; writes status+0x1c, output_len+0x20, cmpx+0x2c at 0x801ae3c0..0x801ae3d8. Timeout invokes reset and returns negative.",
+    "release_vpu": "0x801ac340 clears node+4 and returns0; clist remains allocated until command1.",
+    "irq": "0x801ae87c: successful completion calls 0x80065c14 at0x801ae970; error branch records status with output_len=0 and cmpx=0 at0x801ae980..0x801ae9d8, with no completion call in that branch."
+  },
+  "limits": [
+    "No camera execution or runtime state observed.",
+    "Kernel helper symbol names are source-correlated labels; addresses/instruction effects are binary facts.",
+    "The exact cache helper implementation/direction enumeration was not independently decompiled.",
+    "No decompilation of entire kernel; only 11 dispatcher/callee functions and independent objdump range exported.",
+    "The inherited first misbased decompilation file is INVALID and must not be used."
+  ]
+}

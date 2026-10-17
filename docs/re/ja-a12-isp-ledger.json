@@ -1,0 +1,162 @@
+{
+  "artifact": "tx-isp.ko",
+  "sha256": "d82a86c36694f1da8e79b797a25309889433229f3bc42ffdbdfca3b382825907",
+  "format": "ELF32 little-endian MIPS relocatable; symbol names and relocations retained",
+  "coordinates": "Offsets below are relative to .text, not runtime addresses; .text file offset is 0x60",
+  "dispatcher": {
+    "symbol": "tx_isp_unlocked_ioctl",
+    "text_offset": "0x1285c",
+    "unknown_command_return": 0,
+    "unknown_return_offset": "0x13bf0"
+  },
+  "operations": [
+    {
+      "name": "register sensor",
+      "command": "0x805456c1",
+      "payload_bytes": 84,
+      "copy_instruction": "0x12cb4"
+    },
+    {
+      "name": "unregister sensor",
+      "command": "0x805456c2",
+      "payload_bytes": 84,
+      "copy_instruction": "0x12d3c"
+    },
+    {
+      "name": "sensor selection",
+      "command": "0xc0045627",
+      "payload_bytes": 8,
+      "copy_instruction": "0x12bf0",
+      "fields": [
+        "enable",
+        "selector"
+      ],
+      "consumer": "subdev_sensor_ops_set_input at 0x4bdc; reads at 0x4c04/0x4c0c"
+    },
+    {
+      "name": "default IQ path",
+      "command": "0xc00456c7",
+      "payload_bytes": 128,
+      "copy_instruction": "0x12638",
+      "unresolved": "Internal split into path slots not established"
+    },
+    {
+      "name": "NCU GET/SET",
+      "commands": [
+        "0x800c56d5",
+        "0x800c56d4"
+      ],
+      "payload_bytes": 12,
+      "fields": [
+        "selector",
+        "physical",
+        "size"
+      ]
+    },
+    {
+      "name": "WDR GET/SET",
+      "commands": [
+        "0x800c56d7",
+        "0x800c56d6"
+      ],
+      "payload_bytes": 12,
+      "evidence_range": "0x13484..0x13518",
+      "fields": [
+        "selector",
+        "physical",
+        "size"
+      ]
+    },
+    {
+      "name": "frame format GET/SET",
+      "commands": [
+        "0x407056c4",
+        "0xc07056c3"
+      ],
+      "payload_bytes": 112,
+      "copy_offsets": [
+        "0xfe04",
+        "0xff04",
+        "0x10018"
+      ]
+    },
+    {
+      "name": "REQBUFS",
+      "command": "0xc0145608",
+      "payload_bytes": 20,
+      "copy_instruction": "0x107d8"
+    },
+    {
+      "name": "QBUF/QUERYBUF/DQBUF",
+      "commands": [
+        "0xc044560f",
+        "0xc0445609",
+        "0xc0445611"
+      ],
+      "payload_bytes": 68,
+      "copy_offsets": [
+        "0x106c4",
+        "0x10b60",
+        "0x10d24"
+      ],
+      "fields": {
+        "memory": "0x30",
+        "address": "0x34",
+        "length": "0x38"
+      }
+    },
+    {
+      "name": "frame completion",
+      "command": "0x400456bf",
+      "evidence": "blocks on completion at 0x10cc4; O_NONBLOCK does not establish bounded ioctl duration"
+    }
+  ],
+  "sensor_record": {
+    "bytes": 84,
+    "selector": {
+      "offset": "0x20",
+      "bytes": 2,
+      "read_offsets": [
+        "0x60c0",
+        "0x6384"
+      ]
+    },
+    "bus_type": {
+      "offset": "0x24",
+      "read_offset": "0x60d8"
+    },
+    "i2c_address": {
+      "offset": "0x3c",
+      "read_offset": "0x6190"
+    },
+    "i2c_adapter": {
+      "offset": "0x40",
+      "read_offset": "0x6124"
+    },
+    "named_public_tail_sensor_id": "0x50 is not the consumed selector"
+  },
+  "known_profile": {
+    "sensors": [
+      "cv2005",
+      "cv2005s1"
+    ],
+    "selectors": [
+      0,
+      1
+    ],
+    "i2c_addresses": [
+      "0x35",
+      "0x36"
+    ],
+    "i2c_adapters": [
+      0,
+      0
+    ],
+    "identity_evidence": "OEM application constructor and AddSensor/DeleteSensor call sites; main/sub addresses are source-correlated hardware identity"
+  },
+  "limits": [
+    "No ISP or sensor ioctl executed on camera during this port validation.",
+    "Registration/buffer setup fixes do not qualify sensor enable/link creation, IVDC or live capture.",
+    "The instruction-anchor checker covers selected dispatch/copy anchors, not the entire module."
+  ]
+}
