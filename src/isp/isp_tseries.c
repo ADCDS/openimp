@@ -4609,6 +4609,15 @@ int IMP_ISP_EnableSensor(void)
     }
     kmsg_trace("libimp/ISP: EnableSensor ENABLE_LINKS ok\n");
 
+#if defined(PLATFORM_T23)
+    if (t23_driver_abi == OPENIMP_T23_VPU_OEM80) {
+        /* The OEM has already streamed the ISP and built/enabled its links.
+         * FrameSource must only stream its own channel, rather than replay
+         * the global sensor/graph edges in ISP_EnsureLinkStreamOn. */
+        tseries_isp_stream_started = 1;
+        tseries_bypass_link_setup_done = 1;
+    }
+#endif
     isp->opened += 2;
     return 0;
 }

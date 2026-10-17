@@ -1,0 +1,81 @@
+{
+  "artifact": "tx-isp.ko",
+  "sha256": "d82a86c36694f1da8e79b797a25309889433229f3bc42ffdbdfca3b382825907",
+  "coordinates": "Module .text offsets, with OEM userspace export line anchors from privately held firmware",
+  "ivdc_workspace": {
+    "owner": "global FrameSource channel 0, when cached direct mode is nonzero",
+    "device": "/dev/misc-ivdc",
+    "commands": {
+      "get_direct_mode": "0xc004543f",
+      "set_workspace_physical": "0xc0045441",
+      "get_memory_lines": "0xc0045442"
+    },
+    "payload_bytes": 4,
+    "size": "stride=ALIGN(picWidth,256); lines!=0 ? stride*lines*3/2 : stride*picHeight*3/8",
+    "oem_setup_order": [
+      "read direct mode at CreateChn",
+      "read line count",
+      "allocate workspace from reserved memory",
+      "set physical address",
+      "REQBUFS"
+    ],
+    "allocation_branch": {
+      "event": "0x03000007",
+      "module_offsets": [
+        "0xe510",
+        "0xe52c",
+        "0xe530",
+        "0xe55c"
+      ],
+      "reserved_address_set": "use supplied physical address through kernel cached mapping",
+      "otherwise": "allocate contiguous normal-RAM DMA workspace"
+    },
+    "release_order": [
+      "STREAMOFF",
+      "REQBUFS count zero",
+      "verify IVDC DDR Addr is zero in /proc/jz/isp/isp-ivdc",
+      "close frame channel",
+      "free reserved workspace",
+      "close misc device at DestroyChn"
+    ],
+    "release_cautions": [
+      "Do not clear supplied physical address before driver cleanup; it chooses the DMA-free ownership branch.",
+      "Closing a pre-STREAMON channel alone does not detach the workspace.",
+      "REQBUFS(0) does not propagate remote event-cleanup errors.",
+      "Printed buffer size remains stale after detach; the address is the useful indicator.",
+      "Derived failure-path requirement: after confirmed kernel detach, clear a never-consumed pending SET_PADDR before freeing its reserved allocation. The OEM successful shutdown does not issue this extra clear."
+    ],
+    "oem_export_line_anchors": [
+      371224,
+      371234,
+      372128,
+      372146,
+      372182,
+      372807,
+      372818,
+      372831,
+      372858
+    ],
+    "failure_profile_with_derived_workspace": {
+      "width": 640,
+      "height": 360,
+      "memory_lines": 540,
+      "workspace_bytes": 622080,
+      "memory_lines_basis": "Retained boot configuration; this trial did not call GET_MEM_LINE.",
+      "workspace_bytes_basis": "Derived from the recovered sizing formula and boot-configured line count."
+    }
+  },
+  "ae_sensor_slots": {
+    "required_profile": "Retained dual direct_mode=2 requires both CV2005 and CV2005S1 registered, even when publishing only sensor 0.",
+    "fault_offset": "0x115ac",
+    "symbol": "sensor_set_integration_time+0x20",
+    "fault": "AE selected slot 1, whose sensor attributes were NULL after registering only slot 0.",
+    "evidence": "Fault address 0xb0; sensor record stride register was 0x5c (92), proving slot 1."
+  },
+  "stream_lifecycle": {
+    "oem_sensor_enable": "Starts the global ISP and creates/enables links once.",
+    "framesource": "Streams its own frame-channel fd; must not repeat global sensor/link setup.",
+    "fork_fix": "Record stream/link flags after successful OEM80 EnableSensor."
+  },
+  "qualification": "Recovered interfaces and failure analysis; native fresh capture remains unqualified until independently decoded."
+}

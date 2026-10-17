@@ -33,8 +33,11 @@ Unset/empty or `sdk88` preserves upstream behavior. Unknown names fail without
 an ioctl downgrade/retry. ISP/native channels retain their selected profile;
 changing the environment during use is unsupported. Proprietary worker launch,
 including direct YUV and decoder entry points, refuses OEM80 and unknown modes.
-The vendor-version gate in the separate `jooanipc-open` project still needs
-OpenIMP-specific integration; do not assume this is a qualified drop-in there.
+The separate `jooanipc-open` project now recognizes this provider explicitly,
+requires these three settings, and limits publication to sensor 0 with audio
+disabled. Both physical sensors must still be registered: the retained
+`direct_mode=2` AE worker visits both slots. This integration is not yet a
+qualified capture replacement.
 
 ## VPU boundary recovered from the binary
 
@@ -96,6 +99,22 @@ the inspected module; driver-returned `sizeimage` stays authoritative. Sensor
 enable/link construction, dual-sensor scheduling, IVDC allocation, interrupt
 behavior and image tuning still need hardware qualification. Registration tests
 alone do not establish those behaviors.
+
+The first combined on-camera trial reached sensor enable, tuning, encoder
+creation/binding and frame-channel format setup. REQBUFS then failed with
+ENOMEM while IVDC requested its internal workspace from normal RAM. Although
+about 14 MiB was free, no contiguous 1 MiB block remained. This is separate from
+the capture frame pool in reserved memory. The OEM supplies a reserved-memory
+IVDC workspace through `/dev/misc-ivdc`; that ownership-aware path remains to
+be implemented. The single registered sensor also left slot 1 without AE
+attributes, producing a separate kernel Oops. See the
+[capture-interface ledger](re/ja-a12-capture-ledger.json) for the recovered
+workspace commands, sizing and release sequence. A subsequent adapter change
+registers both physical slots while publishing only sensor 0. OEM80 now also
+records successful global sensor/link startup so FrameSource does not repeat
+those operations.
+The [physical-trial receipt](re/ja-a12-camera-trial-20261017.json) separates the
+failed capture run from the subsequent source changes and guarded retry.
 
 ## Evidence and validation
 
