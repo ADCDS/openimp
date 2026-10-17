@@ -138,7 +138,7 @@ compile t23_eprc_mbrc src/eprc/eprc_mbrc.c -Werror -ffp-contract=off
 compile t23_helix_jpeg src/t30/helix_jpeg.c -Werror
 
 "$compiler" $link_flags -shared -nostartfiles \
-    -Wl,-soname,libimp.so -Wl,--gc-sections \
+    -Wl,-soname,libimp.so -Wl,--gc-sections -Wl,--no-undefined \
     -Wl,--version-script="$project_dir/src/t40/libimp.map" \
     -o "$output_dir/libimp.so" \
     "$output_dir/openimp_p0.o" \
@@ -193,7 +193,17 @@ compile t23_helix_jpeg src/t30/helix_jpeg.c -Werror
     "$output_dir/t23_rate_control.o" \
     "$output_dir/t23_eprc.o" "$output_dir/t23_eprc_mbrc.o" \
     "$output_dir/t23_helix_jpeg.o" \
-    -ldl -lpthread -lrt -lm
+    -latomic -ldl -lpthread -lrt -lm
+
+# MIPS32's 64-bit atomic loads/stores require GCC's atomic runtime. Keep a
+# compatible runtime next to the build outputs for the retained OEM rootfs,
+# whose loader does not reliably reject unresolved symbols at dlopen time.
+atomic_runtime=$("$compiler" $base_flags -print-file-name=libatomic.so.1)
+if [ "$atomic_runtime" = libatomic.so.1 ] || [ ! -r "$atomic_runtime" ]; then
+    echo "target compiler must provide a shared libatomic.so.1 runtime" >&2
+    exit 1
+fi
+cp "$atomic_runtime" "$output_dir/libatomic.so.1"
 
 "$compiler" $base_flags $repo_includes -Wall -Wextra -Werror \
     "$project_dir/tools/openimp-tuningd.c" "$output_dir/openimp_tuning.o" \

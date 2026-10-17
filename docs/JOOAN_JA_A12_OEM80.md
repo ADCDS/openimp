@@ -3,13 +3,19 @@
 This fork adds an explicit compatibility profile for the JOOAN W3-U / JA-A12,
 T23N with CV2005/CV2005S1, retaining its OEM kernel and modules.
 
-**Status:** source-only builds and boundary tests pass. The initial IVDC
-workspace tests exposed a secondary AE kernel fault and rejected secondary-FPS
-control. Restoring the OEM input-enumeration step initializes the secondary
-runtime index: two subsequent sensor/FPS checks and two three-second IVDC
-workspace cycles were kernel-clean. Native video encoding remains unqualified.
-See the [initial IVDC receipt](re/ja-a12-ivdc-validation-20261017.json) and
-[sensor activation follow-up](re/ja-a12-sensor-activation-20261017.json).
+**Status:** native dual-sensor capture and H.264 encoding work on the physical
+JA-A12 using this source-built library and `jooanipc-open`. Four streams decoded
+at 640×360 main / 320×240 sub, 15 fps; clean native close/restart verified IVDC
+address zero, no media descriptors and no kernel Oops. Physical PTZ/presets and
+Frigate recording of both views also passed in the companion project. See the
+[native video receipt](re/ja-a12-native-video-20261017.json). High resolutions,
+audio, JPEG and long-duration soak require separate qualification.
+
+The [initial IVDC receipt](re/ja-a12-ivdc-validation-20261017.json) records an
+AE fault at the earlier registration-only stage. The [sensor activation
+follow-up](re/ja-a12-sensor-activation-20261017.json) fixes secondary runtime
+index initialization through OEM input enumeration. These historical receipts
+are preserved; their then-current capture blockers are superseded below.
 
 ## Build and selection
 
@@ -21,7 +27,12 @@ T23_EXTRA_LDFLAGS=-muclibc ./build-t23.sh
 
 The standalone compiler path does not require a Thingino build tree. The
 existing Thingino path remains supported. Outputs are in `build/t23/`; no vendor
-SDK library is required. The target uses uClibc 0.9.33.2. A bridge tempfile
+SDK library is required. The link uses `--no-undefined` and GNU `-latomic`.
+Deploy **both** `libimp.so` and the generated compiler-matched
+`libatomic.so.1`, and put that directory on `LD_LIBRARY_PATH`. The old uClibc
+loader accepted an unresolved `__atomic_store_8`, producing a NULL call after
+first IDR when the runtime was missing. Static libatomic from this compiler is
+non-PIC and cannot be substituted into the shared library. The target uses uClibc 0.9.33.2. A bridge tempfile
 compatibility path preserves atomic `O_EXCL | O_CLOEXEC` where `mkostemp` is absent.
 
 Set these before starting a consumer compiled against OpenIMP's public API:
@@ -37,10 +48,9 @@ an ioctl downgrade/retry. ISP/native channels retain their selected profile;
 changing the environment during use is unsupported. Proprietary worker launch,
 including direct YUV and decoder entry points, refuses OEM80 and unknown modes.
 The separate `jooanipc-open` project now recognizes this provider explicitly,
-requires these three settings, and limits publication to sensor 0 with audio
-disabled. Both physical sensors must still be registered: the retained
-`direct_mode=2` AE worker visits both slots. This integration is not yet a
-qualified capture replacement.
+requires these three settings, permits one or two published sensors at 15 fps,
+and requires audio disabled. Both physical sensors must still be registered
+and enumerated because the retained `direct_mode=2` AE worker visits both slots.
 
 ## VPU boundary recovered from the binary
 
@@ -100,9 +110,9 @@ Deleting one slot does not free the other's buffers.
 
 FrameSource's 112-byte format, 20-byte REQBUFS and 68-byte V4L2 records match
 the inspected module; driver-returned `sizeimage` stays authoritative. Sensor
-enable/link construction, dual-sensor scheduling, IVDC allocation, interrupt
-behavior and image tuning still need hardware qualification. Registration tests
-alone do not establish those behaviors.
+enable/link construction, dual-sensor scheduling and IVDC allocation now have
+physical capture evidence at the tested profile. Registration tests alone would
+not establish those behaviors. Arbitrary tuning behavior remains unqualified.
 
 The first combined on-camera trial reached sensor enable, tuning, encoder
 creation/binding and frame-channel format setup. REQBUFS then failed with
@@ -237,3 +247,39 @@ The upstream Helix self-test, including `-c`, allocates video buffers and
 requires exclusive media ownership. No encoding/capture run is qualified here.
 No OEM binary or decompiler export is added by this port. Licensing remains per file as
 documented in upstream `NOTICE`; this fork does not relicense the existing tree.
+
+## Native full-frame path
+
+The retained driver interprets FS channel `/ 3` as sensor and `% 3` as scaler
+output. In `direct_mode=2`, FS0 and FS3 carry special IVDC completion records,
+not complete NV12 frames. The native encoder requires full frames. The client
+therefore enables an unbound 640×360 FS0 workspace holder first, then uses
+ordinary FS1/2 for sensor 0 and FS4/5 for sensor 1. T23 FrameSource capacity is
+six channels; the allocated internal device record grows with that bound.
+The existing six-slot core/VBM tables already support these indices.
+
+Direct pools allocate no image storage: normal physical/virtual addresses are
+zero and the direct address is the OEM `0x80000000` sentinel. Every initial,
+recycled and released direct QBUF uses that address. The independent reserved
+IVDC workspace remains owned by FS0's lifecycle. Pool profile and direct mode
+are frozen at creation rather than reread from mutable environment variables.
+
+OEM DQBUF preserves overflow at +0x3c and completion kind at +0x40 in private
+frame storage. A direct pool always recycles before publishing, even when kind
+is zero. Ordinary pools reject nonzero low-16 completion kinds. No direct
+completion reaches public GetFrame, IVS, or a native encoder. Unsupported
+misc-IVDC mode 3 is rejected explicitly.
+
+The OEM worker uses POLL_FRAME `0x400456bf`, then exactly one DQBUF, checking
+running state again after a STREAMOFF wake. This avoids the old unbounded
+DQBUF retry loop during process shutdown. The tested four actively consumed
+native channels close cleanly; idle IVS-only operation is not established by
+this NVR workload.
+
+The client disables crop and uses the scaler for the full scene. Enabling a
+crop with output dimensions had selected only the sensor's upper-left portion.
+Both installed sensors require horizontal+vertical flip for an upright image.
+Shutdown stops dependent outputs before the FS0 holder, verifies REQBUFS(0)
+detaches the consumed address, clears the pending address and frees rmem only
+after the ownership checks. All-thread `/proc` descriptor inspection matters:
+a zombie leader may still retain live DMA workers under its task directories.

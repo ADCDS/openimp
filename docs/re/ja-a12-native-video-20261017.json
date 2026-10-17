@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-17",
+  "target": "Physical JOOAN JA-A12, T23N, CV2005/CV2005S1, retained OEM Linux3.10.14/modules/IQ",
+  "native_video": {
+    "logical_to_framesource": [
+      1,
+      2,
+      4,
+      5
+    ],
+    "logical_to_encoder": [
+      0,
+      4,
+      1,
+      5
+    ],
+    "workspace_holder": "FS0 unbound, enabled first and disabled after dependents",
+    "sensors": 2,
+    "main": [
+      640,
+      360
+    ],
+    "sub": [
+      320,
+      240
+    ],
+    "configured_fps": 15,
+    "audio": false,
+    "bitrate_main_kbps": 512,
+    "flip0": 3,
+    "flip1": 3,
+    "actual_views": "Distinct real outdoor sensor views visually checked; no private frames committed",
+    "all_four_ffmpeg_decoded": true
+  },
+  "clean_native_cycle": {
+    "tested_client_sha256": "f4cfb74ce0157c133c630a96411603c92e35252f005709d73d68fef426b199d9",
+    "library_sha256": "904d60a63e817cfed97797bef283974d23f75e0ff0b81285d04ef020cc70eb34",
+    "ffmpeg_frames_decoded_per_channel": 3,
+    "process_exit": 0,
+    "all_thread_media_fd_holders": 0,
+    "consumed_ivdc_address_after_close": 0,
+    "kernel_oops": false,
+    "subsequent_same_boot_native_restart": true
+  },
+  "limits": [
+    "High resolutions beyond640x360main/320x240sub, audio, JPEG, GPIO/light/IR-cut behavior and long soak remain unqualified",
+    "Controlled reboot is not a cold power-cycle/early-boot entropy qualification",
+    "Kernel/modules, sensor IQ and guarded OEM network/motor bootstrap remain dependencies",
+    "The broad hardware_validated API field staysfalse until the full feature matrix is qualified"
+  ],
+  "library_sha256": "904d60a63e817cfed97797bef283974d23f75e0ff0b81285d04ef020cc70eb34",
+  "atomic_runtime_sha256": "8e8b6260e50d39e7a1abbe4638c13f54216a45ccfc7973e3b2b287eb55c2a1fb",
+  "build": "Source-only GCC5.4 MIPS o32 uClibc, --no-undefined, dynamic GNU-latomic; runtime copied from same compiler",
+  "tests": "Full T23 and T30 suites passed; optional T30.so export check skipped because that library was not built; metadata ASan+UBSan passed",
+  "companion_receipt": "jooanipc-open/docs/camera-native-test-20261017.json",
+  "boot": "Source-built OpenIMP passed native startup through the retained-OEM reboot handoff; final companion release qualification is tracked in its receipt"
+}

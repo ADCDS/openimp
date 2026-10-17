@@ -23,6 +23,9 @@
 #include "trace_control.h"
 #include "vbm_dq_step.h"
 #include "vbm_delay.h"
+#if defined(PLATFORM_T23)
+#include "t30/t23_vpu_abi.h"
+#endif
 /* T31: frame-ready events of the encoder pull path; T23 shares that VBM
  * block (IVS capture, idle drain) since claude/t23-stub-fixes. */
 #if defined(PLATFORM_T31) || defined(PLATFORM_T23)
@@ -915,8 +918,13 @@ static void fs_dq_note_slept(int fd, long long slept_us)
                 FS_DQ_BLOCKED_HITS, slept_us / 1000LL);
 }
 
-/* Dequeue a filled buffer from the framechan driver */
-int fs_dqbuf(int fd, int *index_out, uint64_t *timestamp_out) {
+typedef struct {
+    uint32_t overflow, kind;
+} FsDqMetadata;
+
+/* Dequeue a filled buffer, retaining the private OEM completion metadata. */
+static int fs_dqbuf_metadata(int fd, int *index_out, uint64_t *timestamp_out,
+                             FsDqMetadata *metadata) {
     void *raw = NULL;
     struct v4l2_buf32 *b;
     int ret;
@@ -925,6 +933,7 @@ int fs_dqbuf(int fd, int *index_out, uint64_t *timestamp_out) {
     long long dq_start_us = 0;
     size_t buf_sz;
 
+    if (metadata) memset(metadata, 0, sizeof(*metadata));
     if (fd < 0 || !index_out) return -1;
 
     buf_sz = sizeof(struct v4l2_buf32) + 0x400;
@@ -984,6 +993,10 @@ int fs_dqbuf(int fd, int *index_out, uint64_t *timestamp_out) {
     }
 
     *index_out = (int)b->index;
+    if (metadata) {
+        metadata->overflow = b->reserved2;
+        metadata->kind = b->reserved;
+    }
     if (timestamp_out != NULL) {
         if (b->ts_usec < 1000000u)
             *timestamp_out = (uint64_t)b->ts_sec * 1000000u + b->ts_usec;
@@ -1005,6 +1018,10 @@ int fs_dqbuf(int fd, int *index_out, uint64_t *timestamp_out) {
     return 0;
 }
 
+int fs_dqbuf(int fd, int *index_out, uint64_t *timestamp_out)
+{
+    return fs_dqbuf_metadata(fd, index_out, timestamp_out, NULL);
+}
 
 /**
  * Close device
@@ -1074,6 +1091,9 @@ typedef struct {
     pthread_mutex_t queue_mutex; /* Mutex for queue access */
     int fd;                 /* Kernel framechan fd for qbuf/dqbuf (-1 if unused) */
     uint8_t *buf_in_userspace; /* Per-buffer: 1 if DQBUF'd, 0 if in kernel queue */
+#if defined(PLATFORM_T23)
+    int oem80, oem_direct;  /* owning profile/mode, frozen at pool creation */
+#endif
 } VBMPool;
 
 /* Global VBM state */
@@ -1335,22 +1355,35 @@ static int calculate_frame_size(int width, int height, int pixfmt) {
     return size;
 }
 
-static int vbm_create_pool(int chn, void *fmt, void *ops, void *priv);
+static int vbm_create_pool(int chn, void *fmt, void *ops, void *priv, int direct_mode);
 static void vbm_log_rmem(const char *what, int chn, int size);
 
-int VBMCreatePool(int chn, void *fmt, void *ops, void *priv) {
+static int vbm_create_pool_locked(int chn, void *fmt, void *ops, void *priv, int direct_mode) {
     int ret;
 
     if (chn < 0 || chn >= MAX_VBM_POOLS) {
         return -1;
     }
     pthread_mutex_lock(&vbm_pool_lock[chn]);
-    ret = vbm_create_pool(chn, fmt, ops, priv);
+    ret = vbm_create_pool(chn, fmt, ops, priv, direct_mode);
     pthread_mutex_unlock(&vbm_pool_lock[chn]);
     return ret;
 }
 
-static int vbm_create_pool(int chn, void *fmt, void *ops, void *priv) {
+int VBMCreatePool(int chn, void *fmt, void *ops, void *priv)
+{
+    return vbm_create_pool_locked(chn, fmt, ops, priv, -1);
+}
+
+#if defined(PLATFORM_T23)
+int VBMCreatePoolOem80(int chn, void *fmt, void *ops, void *priv, int direct_mode)
+{
+    if (direct_mode < 0 || direct_mode > 2) { errno = ENOTSUP; return -1; }
+    return vbm_create_pool_locked(chn, fmt, ops, priv, direct_mode);
+}
+#endif
+
+static int vbm_create_pool(int chn, void *fmt, void *ops, void *priv, int direct_mode) {
 
     if (fmt == NULL) {
         fprintf(stderr, "[VBM] CreatePool: NULL format\n");
@@ -1362,6 +1395,13 @@ static int vbm_create_pool(int chn, void *fmt, void *ops, void *priv) {
         fprintf(stderr, "[VBM] CreatePool: pool for chn=%d already exists, skipping\n", chn);
         return 0;
     }
+#if defined(PLATFORM_T23)
+    OpenIMPT23VpuAbi abi;
+    if (direct_mode >= 0) abi = OPENIMP_T23_VPU_OEM80;
+    else if (openimp_t23_vpu_select(&abi) != 0) return -1;
+#else
+    (void)direct_mode;
+#endif
 
     /* ops can be NULL - we'll use default operations */
     (void)ops;
@@ -1411,6 +1451,12 @@ static int vbm_create_pool(int chn, void *fmt, void *ops, void *priv) {
 
     /* Initialize pool with safe member access */
     pool->chn = chn;
+#if defined(PLATFORM_T23)
+    pool->oem80 = abi == OPENIMP_T23_VPU_OEM80;
+    pool->oem_direct = pool->oem80 &&
+        ((chn == 0 && (direct_mode == 1 || direct_mode == 2)) ||
+         (chn == 3 && direct_mode == 2));
+#endif
     pool->priv = priv;
     pool->frame_count = frame_count;
     pool->fd = -1;
@@ -1476,7 +1522,15 @@ static int vbm_create_pool(int chn, void *fmt, void *ops, void *priv) {
     memset(&alloc_info, 0, sizeof(alloc_info));
     int ret;
 
-    if (pool->pool_id < 0 &&
+    int direct = 0;
+#if defined(PLATFORM_T23)
+    direct = pool->oem_direct;
+#endif
+    if (direct) {
+        /* The queue carries IVDC completion sentinels, not image storage.
+         * The independent FS0 reserved scratch remains owned by FrameSource. */
+        ret = 0;
+    } else if (pool->pool_id < 0 &&
         vbm_take_parked(chn, total_size, &alloc_info) == 0) {
         fprintf(stderr, "[VBM] CreatePool: chn=%d reuses its parked rmem "
                 "block 0x%08x\n", chn, alloc_info.phys_addr);
@@ -1517,7 +1571,7 @@ static int vbm_create_pool(int chn, void *fmt, void *ops, void *priv) {
         fprintf(stderr, "[VBM] CreatePool: failed to allocate queue\n");
         free(pool->available_queue);
         free(pool->buf_in_userspace);
-        DMA_FreePhys(pool->phys_base);
+        if (pool->phys_base) DMA_FreePhys(pool->phys_base);
         free(pool);
         return -1;
     }
@@ -1551,18 +1605,19 @@ static int vbm_create_pool(int chn, void *fmt, void *ops, void *priv) {
         memcpy(frame_bytes + 0x14, &frame_size, sizeof(int));
 
         /* Write phys_addr at offset 0x18 */
-        uint32_t phys = pool->phys_base + (i * pool->frame_size);
+        uint32_t phys = direct ? 0 : pool->phys_base + (i * pool->frame_size);
         memcpy(frame_bytes + 0x18, &phys, sizeof(uint32_t));
 
         /* Write virt_addr at offset 0x1c */
-        uint32_t virt = pool->virt_base + (i * pool->frame_size);
+        uint32_t virt = direct ? 0 : pool->virt_base + (i * pool->frame_size);
         memcpy(frame_bytes + 0x1c, &virt, sizeof(uint32_t));
 
 #if defined(PLATFORM_T23)
-        /* The 1.3.0 public descriptor exposes a direct address followed by
-         * two aligned timestamps.  OpenTX uses the same physical DMA window
-         * for direct and normal capture on T23. */
-        memcpy(frame_bytes + 0x20, &phys, sizeof(uint32_t));
+        /* T23 exposes a direct address followed by two aligned timestamps.
+         * OEM direct completions use a sentinel, not an image DMA address;
+         * ordinary and SDK-profile pools retain their normal physical address. */
+        uint32_t direct_phys = direct ? 0x80000000u : phys;
+        memcpy(frame_bytes + 0x20, &direct_phys, sizeof(uint32_t));
 #else
 
         /* OEM encoder callback reads framePriv->i_fps_num/den from
@@ -1772,6 +1827,9 @@ int VBMPrimeKernelQueue(int chn, int fd, int limit) {
         VBMFrame *f = &pool->frames[idx];
         unsigned long addr_m = use_virt ? (unsigned long)f->virt_addr
                                         : (unsigned long)f->phys_addr;
+#if defined(PLATFORM_T23)
+        if (pool->oem_direct) addr_m = f->direct_phys_addr;
+#endif
         if (j == 0) {
             OPENIMP_TRACE_STDERR("[VBM] PrimeKernelQueue: QBUF using %s address in .m\n",
                     use_virt ? "VIRT" : "PHYS");
@@ -2206,6 +2264,7 @@ int VBMKernelDequeue(int chn, int fd, void **frame_out) {
 
     int idx = -1;
     uint64_t absolute_timestamp = 0;
+    FsDqMetadata metadata;
     int64_t frame_timestamp;
     ki_trace("libimp/VBM: KernelDequeue enter ch=%d fd=%d pool=%p\n", chn, fd, pool);
     if (dbg_count[chn] < 3) {
@@ -2213,7 +2272,7 @@ int VBMKernelDequeue(int chn, int fd, void **frame_out) {
     }
 
     VBM_DQ_STEP(chn, VBM_DQ_STEP_DQBUF);
-    int ret = fs_dqbuf(fd, &idx, &absolute_timestamp);
+    int ret = fs_dqbuf_metadata(fd, &idx, &absolute_timestamp, &metadata);
     ki_trace("libimp/VBM: KernelDequeue post-dq ch=%d fd=%d ret=%d idx=%d\n",
              chn, fd, ret, idx);
     if (dbg_count[chn] < 3) {
@@ -2244,6 +2303,35 @@ int VBMKernelDequeue(int chn, int fd, void **frame_out) {
             fprintf(stderr, "[VBM] VBMKernelDequeue chn=%d: invalid idx=%d (frame_count=%d)\n", chn, idx, pool->frame_count);
         return -1;
     }
+#if defined(PLATFORM_T23)
+    {
+        if (pool->oem80) {
+            /* OEM VBM private fields, never accessed through smaller public
+             * YUV records. Direct kind 3 is a line ring, not complete NV12,
+             * even if the pool's allocated extent is full-frame sized. */
+            memcpy((unsigned char *)&pool->frames[idx] + 0x3f4,
+                   &metadata.overflow, sizeof(metadata.overflow));
+            memcpy((unsigned char *)&pool->frames[idx] + 0x3f8,
+                   &metadata.kind, sizeof(metadata.kind));
+            if (pool->oem_direct || (metadata.kind & 0xffffu)) {
+                static unsigned int rejected;
+                if (OPENIMP_LOG_ALLOW(&rejected))
+                    fprintf(stderr, "[VBM OEM80] ch%d completion kind=0x%08x overflow=%u: native full-frame consumers require ordinary NV12\n",
+                            chn, metadata.kind, metadata.overflow);
+                /* The unbound FS0 workspace holder still needs its queue
+                 * drained. Recycle direct completions without publishing
+                 * them to encoders, IVS, or public GetFrame consumers. */
+                if (pool->buf_in_userspace) pool->buf_in_userspace[idx] = 1;
+                uint32_t address = pool->oem_direct ? pool->frames[idx].direct_phys_addr : pool->frames[idx].phys_addr;
+                int queued = fs_qbuf(fd, idx, address,
+                                    (unsigned int)pool->frames[idx].size);
+                if (!queued && pool->buf_in_userspace) pool->buf_in_userspace[idx] = 0;
+                *frame_out = NULL;
+                return queued ? -1 : VBM_DQ_HELD;
+            }
+        }
+    }
+#endif
 #if defined(PLATFORM_T31)
     frame_timestamp = fs_frame_timestamp(chn, absolute_timestamp);
 #else
@@ -2324,12 +2412,16 @@ int VBMKernelDequeue(int chn, int fd, void **frame_out) {
     pthread_mutex_lock(&pool->queue_mutex);
     if (pool->queue_count >= pool->frame_count) {
         VBMFrame *captured = &pool->frames[idx];
+        uint32_t address = captured->phys_addr;
+#if defined(PLATFORM_T23)
+        if (pool->oem_direct) address = captured->direct_phys_addr;
+#endif
 
         pthread_mutex_unlock(&pool->queue_mutex);
         VBM_DQ_STEP(chn, VBM_DQ_STEP_REQUEUE);
         ki_trace("libimp/VBM: ready-queue-full ch=%d idx=%d count=%d\n",
                  chn, idx, pool->queue_count);
-        if (fs_qbuf(fd, idx, captured->phys_addr,
+        if (fs_qbuf(fd, idx, address,
                     (unsigned int)captured->size) == 0 &&
             pool->buf_in_userspace)
             pool->buf_in_userspace[idx] = 0;
@@ -2630,6 +2722,9 @@ static int vbm_release_frame(int chn, void *frame) {
 
         {
             unsigned long phys = vbm_frame->phys_addr;
+#if defined(PLATFORM_T23)
+            if (pool->oem_direct) phys = vbm_frame->direct_phys_addr;
+#endif
             unsigned int qlen = (unsigned int)vbm_frame->size;
 
             if (fs_qbuf(pool->fd, frame_idx, phys, qlen) == 0) {

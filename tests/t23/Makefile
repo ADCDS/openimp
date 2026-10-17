@@ -30,6 +30,7 @@ ISP_OEM80 := $(BUILD)/t23-isp-oem80-test
 IVDC_OEM80 := $(BUILD)/t23-ivdc-oem80-test
 IVDC_FS := $(BUILD)/t23-ivdc-fs-test
 IVDC_DMA := $(BUILD)/t23-ivdc-dma-test
+FRAME_METADATA := $(BUILD)/t23-frame-metadata-test
 HELIX_NATIVE_SOURCES := $(PROJECT_DIR)/src/t30/t30_helix_encoder.c \
 	$(PROJECT_DIR)/src/t30/t23_vpu_abi.c \
 	$(PROJECT_DIR)/src/t21/t21_h264_descriptor.c \
@@ -93,17 +94,25 @@ ivdc-oem80: $(IVDC_OEM80) $(IVDC_FS) $(IVDC_DMA)
 	$(IVDC_FS)
 	$(IVDC_DMA)
 
+$(FRAME_METADATA): frame_metadata_test.c $(PROJECT_DIR)/src/kernel_interface.c \
+	$(PROJECT_DIR)/src/kernel_interface.h $(PROJECT_DIR)/src/t30/t23_vpu_abi.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DPLATFORM_T23 -I$(PROJECT_DIR)/include -I$(PROJECT_DIR)/src \
+		-ffunction-sections -fdata-sections frame_metadata_test.c $(PROJECT_DIR)/src/t30/t23_vpu_abi.c -pthread \
+		-Wl,--gc-sections -Wl,--wrap=ioctl -o $@
+
 # The code under test passes pointers through 32-bit words, as on MIPS:
 # build without PIE so the test's data lies below 4 GiB.
 check: $(ISP_TUNING_TEST_BIN) $(ACODEC_TEST_BIN) $(ZERO_COPY_TEST_BIN) \
 	$(FAKE_HELIXD_BIN) $(IVS_DIGEST_T31) $(IVS_DIGEST_T23) \
 	$(IVS_FRAMEWORK) $(IVS_MOVE_V2) $(JPEG_QL) $(HELIX_DESCRIPTOR) $(HELIX_STREAM) \
-	$(RMEM_LAYOUT) $(OSD_PACK) $(AUDIO_ABI) $(VPU_ABI) $(ISP_OEM80) $(IVDC_OEM80) $(IVDC_FS) $(IVDC_DMA)
+	$(RMEM_LAYOUT) $(OSD_PACK) $(AUDIO_ABI) $(VPU_ABI) $(ISP_OEM80) $(IVDC_OEM80) $(IVDC_FS) $(IVDC_DMA) $(FRAME_METADATA)
 	$(VPU_ABI)
 	$(ISP_OEM80)
 	$(IVDC_OEM80)
 	$(IVDC_FS)
 	$(IVDC_DMA)
+	$(FRAME_METADATA)
 	$(MAKE) oem80
 	$(HELIX_DESCRIPTOR)
 	$(RMEM_LAYOUT)

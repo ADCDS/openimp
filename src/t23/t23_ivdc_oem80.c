@@ -85,8 +85,9 @@ int openimp_t23_ivdc_create(OpenIMPT23IvdcOem80 *s)
     s->fd = open("/dev/misc-ivdc", O_RDWR | O_CLOEXEC);
     if (s->fd < 0) return -1;
     int mode = -1;
-    if (ioctl(s->fd, 0xc004543ful, &mode) != 0 || mode < 0) {
-        int saved = errno ? errno : EINVAL;
+    int result = ioctl(s->fd, 0xc004543ful, &mode);
+    if (result != 0 || mode < 0 || mode > 2) {
+        int saved = result ? (errno ? errno : EIO) : ENOTSUP;
         close(s->fd); s->fd = -1; errno = saved; return -1;
     }
     s->mode = mode;

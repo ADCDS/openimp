@@ -13,6 +13,8 @@ char _gp;
 #endif
 static unsigned char device[FS_DEV_SIZE + 128];
 static int fail_stop, stops, pool_releases, group_releases, jpeg_exits;
+static int testing_release;
+static unsigned long queued_address;
 int openimp_t23_persist_enabled(void) { return 0; }
 void openimp_t23_persist_write(const char *s, size_t n) { (void)s; (void)n; }
 int IMP_Log_Get_Option(void) { return 0; }
@@ -21,7 +23,10 @@ int fs_stream_off(int fd) { CHECK(fd == 23 || fd == 24); ++stops; if (fail_stop)
 void fs_close_device(int fd) { CHECK(fd == 23 || fd == 24); if (fd == 23) frame_closed = 1; }
 int fs_set_buffer_count(int fd, int count) { CHECK(fd == 24 && count == 0); return 0; }
 int VBMGetFrame(int ch, void **frame) { (void)ch; (void)frame; CHECK(!"teardown test must not capture"); return -1; }
-int fs_qbuf(int fd, int index, unsigned long phys_addr, unsigned int length) { (void)fd; (void)index; (void)phys_addr; (void)length; CHECK(!"teardown test must not queue frames"); return -1; }
+int fs_qbuf(int fd, int index, unsigned long phys_addr, unsigned int length) {
+    CHECK(testing_release && fd == 23 && index == 0 && length == 345600);
+    queued_address = phys_addr; return 0;
+}
 void VBMWaitReleases(int ch) { CHECK(ch == 0 || ch == 1); }
 int VBMFlushFrame(int ch) { CHECK(ch == 0 || ch == 1); return 0; }
 int VBMDestroyPoolParked(int ch) { CHECK(ch == 0 || ch == 1); if (!ch) CHECK(consumed == 0 && supplied == 0); ++pool_releases; return 0; }
@@ -126,6 +131,18 @@ int main(void)
     CHECK(fs_oem_enable_ready(0) < 0 && errno == EIO);
     CHECK(fs_oem_enable_ready(1) < 0 && errno == EIO);
     kernel_taint = 0;
+    testing_release = 1;
+    int32_t wire[9] = {0,0,640,360,10,345600,0,0,(int32_t)0x80000000u};
+    g_fs_ctx[0].oem80 = 1; g_fs_ctx[0].ivdc.mode = 2;
+    *(int32_t *)(fs_channel_base(0)+0x1c4) = 23;
+    CHECK(!release_Frame(wire, gFrameSource) && queued_address == 0x80000000u);
+    wire[1] = 3; g_fs_ctx[3].oem80 = 1;
+    *(int32_t *)(fs_channel_base(3)+0x1c4) = 23;
+    CHECK(!release_Frame(wire, gFrameSource) && queued_address == 0x80000000u);
+    wire[1] = 1; wire[6] = 0x05000000;
+    *(int32_t *)(fs_channel_base(1)+0x1c4) = 23;
+    CHECK(!release_Frame(wire, gFrameSource) && queued_address == 0x05000000u);
+    testing_release = 0;
     CHECK(allocs == frees);
     printf("OEM80 FrameSource lifecycle: %u checks passed\n", checks);
     return 0;

@@ -195,8 +195,16 @@ int dbg_misc_system_info(void *a) { (void)a; return 0; }
 /* Dump flag state referenced by release_Frame. */
 int dump_base_move_ivs __attribute__((weak)) = 0;
 
-/* g_dbg_fs_snap_yuv is a 4 x 4-int table (5 channels * 16 bytes). */
-static int g_dbg_fs_snap_yuv[5 * 4];
+#if defined(PLATFORM_T23)
+#define FS_MAX_CHANNELS   6 /* two sensors, three MSCA outputs each */
+#else
+#define FS_MAX_CHANNELS   5
+#endif
+#define FS_CHANNEL_SIZE   0x2e8
+/* alloc_device adds the 0x40-byte device header; retain the stock tail. */
+#define FS_DEV_SIZE       (FS_MAX_CHANNELS * FS_CHANNEL_SIZE + 0x18)
+
+static int g_dbg_fs_snap_yuv[FS_MAX_CHANNELS * 4];
 
 /* fs_stat_str: string table indexed by channel state field (0x1c).
  * 0 => "INVALID", 1 => "CREATED", 2 => "ENABLED", 3 => "BOUND". */
@@ -213,12 +221,8 @@ static const char *const fs_stat_str[4] = {
  * For the T85 port we treat gFrameSource as an opaque byte pointer.
  * ------------------------------------------------------------------- */
 
-#define FS_MAX_CHANNELS   5
-#define FS_CHANNEL_SIZE   0x2e8
-#define FS_DEV_SIZE       0xea0
-
 /* Offsets into the alloc_device-returned module/header at base `dev_base`.
- * - dev_base + 0x24 : max channels (5)
+ * - dev_base + 0x24 : max channels (6 on T23; 5 otherwise)
  * - dev_base + 0x20 : active channel count (grows on CreateChn)
  * - dev_base + 0x40 : self pointer (the exported `gFrameSource`)
  * - dev_base + 0x54 : fps_num (default 1)
@@ -1162,7 +1166,22 @@ static void *frame_pooling_thread(void *arg)
             fs_trace("libimp/FS: pooling select-enter ch=%d fd=%d iter=%d\n",
                      chn, ctx->fd, poll_count);
             FS_STEP(chn, FS_STEP_SELECT);
-            select_ret = select(ctx->fd + 1, &rfds, NULL, NULL, &tv);
+#if defined(PLATFORM_T23)
+            if (ctx->oem80) {
+                /* This OEM's DQBUF retries signal interruption while still
+                 * streaming. Its completion ioctl is the interruptible wait;
+                 * follow each successful wait with exactly one dequeue. */
+                if (pthread_mutex_trylock(&g_fs_lock) == 0) {
+                    if (FS_FLAG_LOAD(ctx->running)) VBMRecycleIdleFrames(chn);
+                    pthread_mutex_unlock(&g_fs_lock);
+                }
+                uint32_t ready = 0;
+                select_ret = fs_poll_frame(ctx->fd, &ready, 25);
+                if (!FS_FLAG_LOAD(ctx->running)) break; /* STREAMOFF wake */
+                if (select_ret == 0) select_ret = ready ? 1 : 0;
+            } else
+#endif
+                select_ret = select(ctx->fd + 1, &rfds, NULL, NULL, &tv);
             fs_trace("libimp/FS: pooling select-exit ch=%d fd=%d iter=%d rc=%d errno=%d\n",
                      chn, ctx->fd, poll_count, select_ret, errno);
             if (select_ret < 0) {
@@ -1214,6 +1233,9 @@ static void *frame_pooling_thread(void *arg)
              * in DQBUF until the next frame, its select() is always ready.
              * fs_dqbuf() learns which and logs it once. */
             while (1) {
+#if defined(PLATFORM_T23)
+                if (ctx->oem80 && drained) break;
+#endif
                 /* No further DQBUF once DisableChn asked us to stop: it has
                  * issued STREAMOFF (or is about to), and a DQBUF on T31
                  * sleeps until the next frame, which may never come. */
@@ -1414,6 +1436,12 @@ int32_t release_Frame(int32_t *arg1, void *arg2)
 
     idx = arg1[0];
     phys = (unsigned long)(uint32_t)arg1[6];
+#if defined(PLATFORM_T23)
+    if (g_fs_ctx[chn].oem80 &&
+        ((chn == 0 && (g_fs_ctx[0].ivdc.mode == 1 || g_fs_ctx[0].ivdc.mode == 2)) ||
+         (chn == 3 && g_fs_ctx[0].ivdc.mode == 2)))
+        phys = (uint32_t)arg1[8];
+#endif
     len = (unsigned int)arg1[5];
     if (len == 0) {
         fs_trace("libimp/FS: release_frame zero-len ch=%d fd=%d idx=%d\n",
@@ -2330,7 +2358,14 @@ int IMP_FrameSource_EnableChn(int chnNum)
         openimp_t23_ivdc_prepare(&ctx->ivdc, ctx->attr.picWidth, ctx->attr.picHeight) != 0)
         goto oem_failed;
 #endif
-    if (VBMCreatePool(chnNum, vbm_fmt, g_fs_vbm_ops, gFrameSource) < 0) {
+    int pool_result;
+#if defined(PLATFORM_T23)
+    if (ctx->oem80)
+        pool_result = VBMCreatePoolOem80(chnNum, vbm_fmt, g_fs_vbm_ops, gFrameSource, g_fs_ctx[0].ivdc.mode);
+    else
+#endif
+        pool_result = VBMCreatePool(chnNum, vbm_fmt, g_fs_vbm_ops, gFrameSource);
+    if (pool_result < 0) {
         fs_trace("libimp/FS: enable VBMCreatePool-fail ch=%d\n", chnNum);
         IMP_LOG_LIMITED(LOG_ERR, "Framesource", "EnableChn(%d): cannot create the frame pool (rmem exhausted?)", chnNum);
         FS_ENABLE_OEM_FAILURE();

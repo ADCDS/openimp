@@ -78,6 +78,10 @@ void fs_close_device(int fd);
 
 /* VBM (Video Buffer Manager) operations */
 int VBMCreatePool(int chn, void *fmt, void *ops, void *priv);
+#if defined(PLATFORM_T23)
+/* Internal OEM80 seam: mode is cached by FS0, not read from the environment. */
+int VBMCreatePoolOem80(int chn, void *fmt, void *ops, void *priv, int direct_mode);
+#endif
 int VBMDestroyPool(int chn);
 /* DisableChn: like VBMDestroyPool, but T21/T20 keep the pool's rmem block
  * for the channel's next pool of the same size (rmem fragmentation). */

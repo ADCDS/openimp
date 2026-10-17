@@ -382,7 +382,7 @@ int imp_log_fun(int level, int option, int type, ...)
 void *alloc_device(const char *name, size_t size)
 {
     (void)name;
-    return calloc(1, size);
+    return calloc(1, size + 0x40); /* match the real device header contract */
 }
 void free_device(void *dev) { free(dev); }
 int is_has_simd128(void) { return 0; }
@@ -693,6 +693,16 @@ static void test_bad_channels(void)
     /* as the vendor: no channel there, nothing to do */
     CHECK(IMP_FrameSource_DestroyChn(0) == 0, "destroy twice");
     CHECK(IMP_FrameSource_DestroyChn(3) == 0, "destroy never created");
+#if defined(PLATFORM_T23)
+    /* The second sensor's ordinary output 2 is channel 5. Exercise its
+     * complete raw state allocation, primitives, FD and VBM cleanup. */
+    CHECK(IMP_FrameSource_CreateChn(5, &a) == 0, "create sixth channel");
+    CHECK(IMP_FrameSource_EnableChn(5) == 0, "enable sixth channel");
+    CHECK(IMP_FrameSource_DisableChn(5) == 0, "disable sixth channel");
+    CHECK(IMP_FrameSource_DestroyChn(5) == 0, "destroy sixth channel");
+    CHECK(IMP_FrameSource_CreateChn(6, &a) != 0, "refuse seventh channel");
+    check_clean("sixth channel");
+#endif
 }
 
 /* A frame a consumer still holds when the channel is disabled (and the
